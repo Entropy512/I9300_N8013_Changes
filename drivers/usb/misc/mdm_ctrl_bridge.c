@@ -132,12 +132,17 @@ static void resp_avail_cb(struct urb *urb)
 	int			status = 0;
 	int			resubmit_urb = 1;
 	struct bridge		*brdg = dev->brdg;
+	unsigned int		iface_num;
 
 	udev = interface_to_usbdev(dev->intf);
+	iface_num = dev->intf->cur_altsetting->desc.bInterfaceNumber;
+
 	switch (urb->status) {
+	case -ENOENT:
 	case 0:
 		/*success*/
 		dev->get_encap_res++;
+		pr_info("[RACB:%d]<\n", iface_num);
 		if (brdg && brdg->ops.send_pkt)
 			brdg->ops.send_pkt(brdg->ctx, urb->transfer_buffer,
 				urb->actual_length);
@@ -145,7 +150,6 @@ static void resp_avail_cb(struct urb *urb)
 
 	/*do not resubmit*/
 	case -ESHUTDOWN:
-	case -ENOENT:
 	case -ECONNRESET:
 		/* unplug */
 	case -EPROTO:
@@ -158,7 +162,7 @@ static void resp_avail_cb(struct urb *urb)
 			__func__, urb->status);
 	}
 
-	if (resubmit_urb) {
+	if (urb->status != -ENOENT && resubmit_urb) {
 		/*re- submit int urb to check response available*/
 		usb_anchor_urb(dev->inturb, &dev->tx_submitted);
 		status = usb_submit_urb(dev->inturb, GFP_ATOMIC);
@@ -168,6 +172,7 @@ static void resp_avail_cb(struct urb *urb)
 				__func__, status);
 			usb_unanchor_urb(dev->inturb);
 		}
+		pr_info("[CHKRA:%d]>\n", iface_num);
 	}
 }
 
@@ -180,11 +185,14 @@ static void notification_available_cb(struct urb *urb)
 	struct bridge			*brdg = dev->brdg;
 	unsigned int			ctrl_bits;
 	unsigned char			*data;
+	unsigned int		iface_num;
 
 	udev = interface_to_usbdev(dev->intf);
+	iface_num = dev->intf->cur_altsetting->desc.bInterfaceNumber;
 
 	switch (urb->status) {
 	case 0:
+		pr_info("[NACB:%d]<\n", iface_num);
 		/*success*/
 		break;
 	case -ESHUTDOWN:
@@ -224,7 +232,8 @@ static void notification_available_cb(struct urb *urb)
 				__func__, status);
 			usb_unanchor_urb(dev->readurb);
 			goto resubmit_int_urb;
-		}
+		} else
+			pr_info("[NRA:%d]>\n", iface_num);
 		return;
 	case USB_CDC_NOTIFY_NETWORK_CONNECTION:
 		dev_dbg(&udev->dev, "%s network\n", ctrl->wValue ?
@@ -252,12 +261,18 @@ resubmit_int_urb:
 		dev_err(&udev->dev, "%s: Error re-submitting Int URB %d\n",
 		__func__, status);
 		usb_unanchor_urb(urb);
-	}
+	} else
+		pr_info("[CHKRA:%d]>\n", iface_num);
 }
 
 int ctrl_bridge_start_read(struct ctrl_bridge *dev)
 {
-	int	retval = 0;
+	int			retval = 0;
+	struct usb_device	*udev;
+	unsigned int		iface_num;
+
+	udev = interface_to_usbdev(dev->intf);
+	iface_num = dev->intf->cur_altsetting->desc.bInterfaceNumber;
 
 	if (!dev->inturb) {
 		dev_err(&dev->udev->dev, "%s: inturb is NULL\n", __func__);
@@ -273,6 +288,7 @@ int ctrl_bridge_start_read(struct ctrl_bridge *dev)
 				__func__, retval);
 			usb_unanchor_urb(dev->inturb);
 		}
+		pr_info("[CHKRA:%d]>\n", iface_num);
 	}
 
 	return retval;
@@ -505,9 +521,15 @@ int ctrl_bridge_resume(unsigned int id)
 	}
 
 	/* if the bridge is open, resume reading */
+#ifndef CONFIG_MDM_HSIC_PM
 	if (dev->brdg)
 		return ctrl_bridge_start_read(dev);
-
+#else
+	/* if the bridge is open or not, resume to consume mdm request
+	 * because this link is not dead, it's alive
+	 */
+	return ctrl_bridge_start_read(dev);
+#endif
 	return 0;
 }
 
@@ -711,6 +733,12 @@ ctrl_bridge_probe(struct usb_interface *ifc, struct usb_host_endpoint *int_in,
 
 	ch_id++;
 
+#ifdef CONFIG_MDM_HSIC_PM
+	/* if the bridge is open or not, resume to consume mdm request
+	 * because this link is not dead, it's alive
+	 */
+	ctrl_bridge_start_read(dev);
+#endif
 	return retval;
 
 free_rbuf:

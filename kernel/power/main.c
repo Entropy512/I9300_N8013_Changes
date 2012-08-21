@@ -683,7 +683,7 @@ static ssize_t mali_lock_store(struct kobject *kobj,
 		mali_lock_cnt = mali_dvfs_bottom_lock_pop();
 		if (mali_lock_cnt == 0)
 			mali_lock_val = 0;
-	} else if (val > 0 && val < 4) { /* lock with level */
+	} else if (val > 0 && val < 5) { /* lock with level */
 		mali_lock_cnt = mali_dvfs_bottom_lock_push(val);
 		if (mali_lock_val < val)
 			mali_lock_val = val;

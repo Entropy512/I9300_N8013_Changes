@@ -436,14 +436,13 @@ static int mtp_send_signal(int value)
 	info.si_code = SI_QUEUE;
 	info.si_int = value;
 	rcu_read_lock();
-
 	if (!current->nsproxy) {
 		printk(KERN_DEBUG "process has gone\n");
 		rcu_read_unlock();
 		return -ENODEV;
 	}
-
 	t = pid_task(find_vpid(mtp_pid), PIDTYPE_PID);
+
 	if (t == NULL) {
 		printk(KERN_DEBUG "no such pid\n");
 		rcu_read_unlock();
@@ -1047,7 +1046,6 @@ mtpg_function_unbind(struct usb_configuration *c, struct usb_function *f)
 
 	while ((req = mtpg_req_get(dev, &dev->tx_idle)))
 		mtpg_request_free(req, dev->bulk_in);
-
 	while ((req = mtpg_req_get(dev, &dev->intr_idle)))
 		mtpg_request_free(req, dev->int_in);
 }
@@ -1138,7 +1136,6 @@ mtpg_function_bind(struct usb_configuration *c, struct usb_function *f)
 				fs_mtpg_out_desc.bEndpointAddress;
 		int_hs_notify_desc.bEndpointAddress =
 				int_fs_notify_desc.bEndpointAddress;
-
 	}
 
 	mtpg->cdev = cdev;
@@ -1299,7 +1296,8 @@ static int mtp_ctrlrequest(struct usb_composite_dev *cdev,
 		}
 		return value;
 	} else if ((ctrl->bRequestType & USB_TYPE_MASK) == USB_TYPE_VENDOR) {
-		if (ctrl->bRequest == 1
+		if ((ctrl->bRequest == 1 || ctrl->bRequest == 0x54 ||
+			ctrl->bRequest == 0x6F || ctrl->bRequest == 0xFE)
 				&& (ctrl->bRequestType & USB_DIR_IN)
 				&& (w_index == 4 || w_index == 5)) {
 			value = (w_length < sizeof(mtpg_ext_config_desc) ?

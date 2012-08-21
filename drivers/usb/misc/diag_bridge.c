@@ -88,7 +88,8 @@ static void diag_bridge_read_cb(struct urb *urb)
 		return;
 	}
 
-	cbs->read_complete_cb(cbs->ctxt,
+	if (cbs && cbs->read_complete_cb)
+		cbs->read_complete_cb(cbs->ctxt,
 			urb->transfer_buffer,
 			urb->transfer_buffer_length,
 			urb->status < 0 ? urb->status : urb->actual_length);
@@ -169,16 +170,19 @@ static void diag_bridge_write_cb(struct urb *urb)
 		dev_err(&dev->udev->dev, "%s: proto error\n", __func__);
 		/* save error so that subsequent read/write returns ESHUTDOWN */
 		dev->err = urb->status;
+		usb_free_urb(urb);
 		return;
 	}
 
-	cbs->write_complete_cb(cbs->ctxt,
+	if (cbs && cbs->write_complete_cb)
+		cbs->write_complete_cb(cbs->ctxt,
 			urb->transfer_buffer,
 			urb->transfer_buffer_length,
 			urb->status < 0 ? urb->status : urb->actual_length);
 
 	dev->bytes_to_mdm += urb->actual_length;
 	dev->pending_writes--;
+	usb_free_urb(urb);
 }
 
 int diag_bridge_write(char *data, int size)
@@ -187,6 +191,7 @@ int diag_bridge_write(char *data, int size)
 	unsigned int		pipe;
 	struct diag_bridge	*dev = __dev;
 	int			ret;
+	int			spin;
 
 	dev_dbg(&dev->udev->dev, "%s:\n", __func__);
 
@@ -210,10 +215,28 @@ int diag_bridge_write(char *data, int size)
 		return -ENOMEM;
 	}
 
-	ret = usb_autopm_get_interface(dev->ifc);
+	ret = usb_autopm_get_interface_async(dev->ifc);
 	if (ret < 0) {
 		dev_err(&dev->udev->dev, "autopm_get failed:%d\n", ret);
 		usb_free_urb(urb);
+		return ret;
+	}
+
+	for (spin = 0; spin < 10; spin++) {
+		/* check rpm active */
+		if (dev->udev->dev.power.runtime_status == RPM_ACTIVE) {
+			ret = 0;
+			break;
+		} else {
+			dev_err(&dev->udev->dev, "waiting rpm active\n");
+			ret = -EAGAIN;
+		}
+		msleep(20);
+	}
+	if (ret < 0) {
+		dev_err(&dev->udev->dev, "rpm active failed:%d\n", ret);
+		usb_free_urb(urb);
+		usb_autopm_put_interface(dev->ifc);
 		return ret;
 	}
 
@@ -232,9 +255,9 @@ int diag_bridge_write(char *data, int size)
 		usb_autopm_put_interface(dev->ifc);
 		return ret;
 	}
-
+#if 0
 	usb_free_urb(urb);
-
+#endif
 	return 0;
 }
 EXPORT_SYMBOL(diag_bridge_write);
@@ -455,6 +478,7 @@ static struct usb_driver diag_bridge_driver = {
 	.disconnect =	diag_bridge_disconnect,
 	.suspend =	diag_bridge_suspend,
 	.resume =	diag_bridge_resume,
+	.reset_resume =	diag_bridge_resume,
 	.id_table =	diag_bridge_ids,
 	.supports_autosuspend = 1,
 };

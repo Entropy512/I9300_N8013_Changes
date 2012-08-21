@@ -117,7 +117,17 @@ static inline  bool rx_halted(struct data_bridge *dev)
 
 static inline bool rx_throttled(struct bridge *brdg)
 {
+#ifndef CONFIG_MDM_HSIC_PM
 	return test_bit(RX_THROTTLED, &brdg->flags);
+#else
+	/* if the bridge is open or not, resume to consume mdm request
+	 * because this link is not dead, it's alive
+	 */
+	if (brdg)
+		return test_bit(RX_THROTTLED, &brdg->flags);
+	else
+		return 0;
+#endif
 }
 
 int data_bridge_unthrottle_rx(unsigned int id)
@@ -149,11 +159,25 @@ static void data_bridge_process_rx(struct work_struct *work)
 		container_of(work, struct data_bridge, process_rx_w);
 
 	struct bridge		*brdg = dev->brdg;
-
+#if !defined(CONFIG_MDM_HSIC_PM)
+	/* if the bridge is open or not, resume to consume mdm request
+	 * because this link is not dead, it's alive
+	 */
 	if (!brdg || !brdg->ops.send_pkt || rx_halted(dev))
 		return;
-
+#endif
 	while (!rx_throttled(brdg) && (skb = skb_dequeue(&dev->rx_done))) {
+#ifdef CONFIG_MDM_HSIC_PM
+		/* if the bridge is open or not, resume to consume mdm request
+		 * because this link is not dead, it's alive
+		 */
+		if (!brdg) {
+			print_hex_dump(KERN_INFO, "dun:", 0, 1, 1, skb->data,
+							skb->len, false);
+			dev_kfree_skb_any(skb);
+			continue;
+		}
+#endif
 		dev->to_host++;
 		info = (struct timestamp_info *)skb->cb;
 		info->rx_done_sent = get_timestamp();
@@ -197,6 +221,7 @@ static void data_bridge_read_cb(struct urb *urb)
 	skb_put(skb, urb->actual_length);
 
 	switch (urb->status) {
+	case -ENOENT: /* suspended */
 	case 0: /* success */
 		queue = 1;
 		info->rx_done = get_timestamp();
@@ -212,7 +237,6 @@ static void data_bridge_read_cb(struct urb *urb)
 		schedule_work(&dev->kevent);
 		/* FALLTHROUGH */
 	case -ESHUTDOWN:
-	case -ENOENT: /* suspended */
 	case -ECONNRESET: /* unplug */
 	case -EPROTO:
 		dev_kfree_skb_any(skb);
@@ -231,6 +255,10 @@ static void data_bridge_read_cb(struct urb *urb)
 	spin_lock(&dev->rx_done.lock);
 	list_add_tail(&urb->urb_list, &dev->rx_idle);
 	spin_unlock(&dev->rx_done.lock);
+
+	/* during suspend handle rx packet, but do not queue rx work */
+	if (urb->status == -ENOENT)
+		return;
 
 	if (queue)
 		queue_work(dev->wq, &dev->process_rx_w);
@@ -266,6 +294,7 @@ static int submit_rx_urb(struct data_bridge *dev, struct urb *rx_urb,
 	if (retval)
 		goto fail;
 
+	usb_mark_last_busy(dev->udev);
 	return 0;
 fail:
 	usb_unanchor_urb(rx_urb);
@@ -320,9 +349,9 @@ int data_bridge_open(struct bridge *brdg)
 	dev->tx_unthrottled_cnt = 0;
 	dev->rx_throttled_cnt = 0;
 	dev->rx_unthrottled_cnt = 0;
-
+#ifndef CONFIG_MDM_HSIC_PM
 	queue_work(dev->wq, &dev->process_rx_w);
-
+#endif
 	return 0;
 }
 EXPORT_SYMBOL(data_bridge_open);
@@ -563,8 +592,12 @@ static int data_bridge_resume(struct data_bridge *dev)
 		dev->to_modem++;
 		dev->txurb_drp_cnt--;
 	}
-
+	/* if the bridge is open or not, resume to consume mdm request
+	 * because this link is not dead, it's alive
+	 */
+#ifndef CONFIG_MDM_HSIC_PM
 	if (dev->brdg)
+#endif
 		queue_work(dev->wq, &dev->process_rx_w);
 
 	return 0;
@@ -662,7 +695,12 @@ static int data_bridge_probe(struct usb_interface *iface,
 
 	/*allocate list of rx urbs*/
 	data_bridge_prepare_rx(dev);
-
+#ifdef CONFIG_MDM_HSIC_PM
+	/* if the bridge is open or not, resume to consume mdm request
+	 * because this link is not dead, it's alive
+	 */
+	queue_work(dev->wq, &dev->process_rx_w);
+#endif
 	platform_device_add(dev->pdev);
 
 	return 0;
@@ -1040,6 +1078,7 @@ static struct usb_driver bridge_driver = {
 	.id_table =		bridge_ids,
 	.suspend =		bridge_suspend,
 	.resume =		bridge_resume,
+	.reset_resume =		bridge_resume,
 	.supports_autosuspend =	1,
 };
 

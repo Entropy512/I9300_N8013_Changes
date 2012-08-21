@@ -61,6 +61,7 @@
 #define USB_ETH_RNDIS y
 #include "f_rndis.c"
 #include "rndis.c"
+#include "f_diag.c"
 #include "f_dm.c"
 
 MODULE_AUTHOR("Mike Lockwood");
@@ -810,6 +811,63 @@ static struct android_usb_function accessory_function = {
 	.ctrlrequest	= accessory_function_ctrlrequest,
 };
 
+/* DIAG : enabled DIAG clients- "diag[,diag_mdm]" */
+static char diag_clients[32];
+static ssize_t clients_store(
+		struct device *device, struct device_attribute *attr,
+		const char *buff, size_t size)
+{
+	strlcpy(diag_clients, buff, sizeof(diag_clients));
+
+	return size;
+}
+
+static DEVICE_ATTR(clients, S_IWUSR, NULL, clients_store);
+static struct device_attribute *diag_function_attributes[] = {
+				&dev_attr_clients, NULL };
+
+static int diag_function_init(struct android_usb_function *f,
+				 struct usb_composite_dev *cdev)
+{
+	return diag_setup();
+}
+
+static void diag_function_cleanup(struct android_usb_function *f)
+{
+	diag_cleanup();
+}
+
+static int diag_function_bind_config(struct android_usb_function *f,
+					struct usb_configuration *c)
+{
+	char *name;
+	char buf[32], *b;
+	int once = 0, err = -1;
+	int (*notify)(uint32_t, const char *) = NULL;
+
+	strlcpy(buf, diag_clients, sizeof(buf));
+	b = strim(buf);
+	while (b) {
+		notify = NULL;
+		name = strsep(&b, ",");
+
+		if (name) {
+			err = diag_function_add(c, name, notify);
+			if (err)
+				pr_err("%s : usb: diag: Cannot open channel '%s\r\n",
+						 __func__, name);
+		}
+	}
+	return err;
+}
+
+static struct android_usb_function diag_function = {
+	.name		= "diag",
+	.init		= diag_function_init,
+	.cleanup	= diag_function_cleanup,
+	.bind_config	= diag_function_bind_config,
+	.attributes	= diag_function_attributes,
+};
 
 static int dm_function_bind_config(struct android_usb_function *f,
 					struct usb_configuration *c)
@@ -833,6 +891,7 @@ static struct android_usb_function *supported_functions[] = {
 #endif
 	&mass_storage_function,
 	&accessory_function,
+	&diag_function,
 	&dm_function,
 	NULL
 };
