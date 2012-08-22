@@ -36,9 +36,11 @@
 #define DBG(f, x...) \
 	pr_debug(DRIVER_NAME " [%s()]: " f,  __func__, ## x)
 
+#ifndef CONFIG_FAST_RESUME
 #if defined(CONFIG_LEDS_CLASS) || (defined(CONFIG_LEDS_CLASS_MODULE) && \
 	defined(CONFIG_MMC_SDHCI_MODULE))
 #define SDHCI_USE_LEDS_CLASS
+#endif
 #endif
 
 #define MAX_TUNING_LOOP 40
@@ -1967,6 +1969,10 @@ static void sdhci_tasklet_finish(unsigned long param)
 		   controllers do not like that. */
 		sdhci_reset(host, SDHCI_RESET_CMD);
 		sdhci_reset(host, SDHCI_RESET_DATA);
+#ifdef CONFIG_MACH_PX
+		printk(KERN_DEBUG "%s: Controller is resetted!\n",
+			mmc_hostname(host->mmc));
+#endif
 	}
 
 	host->mrq = NULL;
@@ -2063,6 +2069,10 @@ static void sdhci_cmd_irq(struct sdhci_host *host, u32 intmask)
 
 	if (host->cmd->error) {
 		tasklet_schedule(&host->finish_tasklet);
+#ifdef CONFIG_MACH_PX
+		printk(KERN_DEBUG "%s: finish tasklet schedule\n",
+			mmc_hostname(host->mmc));
+#endif
 		return;
 	}
 
@@ -2347,6 +2357,30 @@ int sdhci_suspend_host(struct sdhci_host *host, pm_message_t state)
 }
 
 EXPORT_SYMBOL_GPL(sdhci_suspend_host);
+
+#if defined(CONFIG_MACH_GC1) || defined(CONFIG_TARGET_LOCALE_KOR)
+void sdhci_shutdown_host(struct sdhci_host *host)
+{
+	sdhci_disable_card_detection(host);
+
+	free_irq(host->irq, host);
+
+	if (host->vmmc) {
+		if (regulator_is_enabled(host->vmmc)) {
+#ifdef CONFIG_MIDAS_COMMON
+			if (host->ops->set_power)
+				host->ops->set_power(0);
+#endif
+			regulator_disable(host->vmmc);
+			pr_info("%s : MMC Card OFF\n", __func__);
+#if defined(CONFIG_TARGET_LOCALE_KOR)
+			mdelay(5);
+#endif
+		}
+	}
+}
+EXPORT_SYMBOL_GPL(sdhci_shutdown_host);
+#endif
 
 int sdhci_resume_host(struct sdhci_host *host)
 {
