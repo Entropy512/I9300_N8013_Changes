@@ -48,6 +48,8 @@
 #else	/* CONFIG_CPU_EXYNOS4210 */
 #if defined(CONFIG_FB_S5P_S6E8AA0)
 #include "mdnie_table_c1m0.h"
+#elif defined(CONFIG_FB_S5P_EA8061)
+#include "mdnie_table_c1m0.h"
 #elif defined(CONFIG_FB_S5P_S6E63M0)
 #include "mdnie_table_c1m0.h"
 #elif defined(CONFIG_FB_S5P_S6C1372)
@@ -74,11 +76,11 @@
 #define DIM_BACKLIGHT_VALUE		16
 #define CABC_CUTOFF_BACKLIGHT_VALUE	40	/* 2.5% */
 #elif defined(CONFIG_FB_S5P_S6C1372)
-#define MAX_BACKLIGHT_VALUE		1441 //90%
+#define MAX_BACKLIGHT_VALUE		1441	/* 90% */
 #define MID_BACKLIGHT_VALUE		784
 #define LOW_BACKLIGHT_VALUE		16
 #define DIM_BACKLIGHT_VALUE		16
-#define CABC_CUTOFF_BACKLIGHT_VALUE	40	/* 2.5% */
+#define CABC_CUTOFF_BACKLIGHT_VALUE	34
 #endif
 #define MAX_BRIGHTNESS_LEVEL		255
 #define MID_BRIGHTNESS_LEVEL		150
@@ -294,7 +296,7 @@ static void mdnie_pwm_control_cabc(struct mdnie_info *mdnie, int value)
 	mutex_lock(&mdnie->dev_lock);
 
 	idx = tunning_table[mdnie->cabc][mdnie->mode][mdnie->scenario].idx_lut;
-	p_plut = power_lut[idx];
+	p_plut = power_lut[mdnie->power_lut_idx][idx];
 	min_duty = p_plut[7] * value / 100;
 
 	mdnie_write(0x00, 0x0000);
@@ -337,7 +339,7 @@ static void mdnie_pwm_control_cabc(struct mdnie_info *mdnie, int value)
 	mutex_lock(&mdnie->dev_lock);
 
 	idx = tunning_table[mdnie->cabc][mdnie->mode][mdnie->scenario].idx_lut;
-	p_plut = power_lut[idx];
+	p_plut = power_lut[mdnie->power_lut_idx][idx];
 	min_duty = p_plut[7] * value / 100;
 
 	mdnie_write(0x00, 0x0001);
@@ -375,9 +377,10 @@ static int update_brightness(struct mdnie_info *mdnie)
 	value = get_backlight_level_from_brightness(brightness);
 
 	if (!mdnie->enable) {
-		dev_err(mdnie->dev, "WTH! do not configure mDNIe after LCD/mDNIe power off\n");
+		dev_err(mdnie->dev, "mdnie states is off\n");
 		return 0;
 	}
+
 	if (brightness <= CABC_CUTOFF_BACKLIGHT_VALUE) {
 		mdnie_pwm_control(mdnie, value);
 	} else {
@@ -571,6 +574,60 @@ static ssize_t cabc_store(struct device *dev,
 
 	return count;
 }
+
+static ssize_t auto_brightness_show(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+	struct mdnie_info *mdnie = dev_get_drvdata(dev);
+	char *pos = buf;
+	int i;
+
+	pos += sprintf(pos, "%d, %d, ", mdnie->auto_brightness, mdnie->power_lut_idx);
+
+	for (i = 0; i < 5; i++)
+		pos += sprintf(pos, "0x%02x, ", power_lut[mdnie->power_lut_idx][0][i]);
+
+	pos += sprintf(pos, "\n");
+
+	return pos - buf;
+}
+
+static ssize_t auto_brightness_store(struct device *dev,
+	struct device_attribute *attr, const char *buf, size_t size)
+{
+	struct mdnie_info *mdnie = dev_get_drvdata(dev);
+	int value;
+	int rc;
+
+	rc = strict_strtoul(buf, (unsigned int)0, (unsigned long *)&value);
+	if (rc < 0)
+		return rc;
+	else {
+		if (mdnie->auto_brightness != value) {
+			dev_info(dev, "%s - %d -> %d\n", __func__, mdnie->auto_brightness, value);
+			mutex_lock(&mdnie->dev_lock);
+			mdnie->auto_brightness = value;
+#if defined(CONFIG_FB_S5P_S6C1372)
+			mutex_lock(&mdnie->lock);
+			mdnie->cabc = (value) ? CABC_ON : CABC_OFF;
+			mutex_unlock(&mdnie->lock);
+#endif
+			if (mdnie->auto_brightness >= 5)
+				mdnie->power_lut_idx = LUT_LEVEL_OUTDOOR_2;
+			else if (mdnie->auto_brightness == 4)
+				mdnie->power_lut_idx = LUT_LEVEL_OUTDOOR_1;
+			else
+				mdnie->power_lut_idx = LUT_LEVEL_MANUAL_AND_INDOOR;
+			mutex_unlock(&mdnie->dev_lock);
+			set_mdnie_value(mdnie, 0);
+			if (mdnie->bd_enable)
+				update_brightness(mdnie);
+		}
+	}
+	return size;
+}
+
+static DEVICE_ATTR(auto_brightness, 0644, auto_brightness_show, auto_brightness_store);
 #endif
 
 static ssize_t tunning_show(struct device *dev,
@@ -657,7 +714,11 @@ static struct device_attribute mdnie_attributes[] = {
 	__ATTR(scenario, 0664, scenario_show, scenario_store),
 	__ATTR(outdoor, 0664, outdoor_show, outdoor_store),
 #if defined(CONFIG_FB_MDNIE_PWM)
+#if defined(CONFIG_FB_S5P_S6C1372)
+	__ATTR(cabc, 0444, cabc_show, NULL),
+#else
 	__ATTR(cabc, 0664, cabc_show, cabc_store),
+#endif
 #endif
 	__ATTR(tunning, 0664, tunning_show, tunning_store),
 	__ATTR(negative, 0664, negative_show, negative_store),
@@ -756,12 +817,22 @@ static int mdnie_probe(struct platform_device *pdev)
 	}
 
 #if defined(CONFIG_FB_MDNIE_PWM)
+	if (!pdata) {
+		pr_err("no platform data specified\n");
+		ret = -EINVAL;
+		goto error2;
+	}
+
 	mdnie->bd = backlight_device_register("panel", mdnie->dev,
 		mdnie, &mdnie_backlight_ops, NULL);
 	mdnie->bd->props.max_brightness = MAX_BRIGHTNESS_LEVEL;
 	mdnie->bd->props.brightness = DEFAULT_BRIGHTNESS;
 	mdnie->bd_enable = TRUE;
 	mdnie->lcd_pd = pdata->lcd_pd;
+
+	ret = device_create_file(&mdnie->bd->dev, &dev_attr_auto_brightness);
+	if (ret < 0)
+		dev_err(&mdnie->bd->dev, "failed to add sysfs entries, %d\n", __LINE__);
 #endif
 
 	mdnie->scenario = UI_MODE;
@@ -770,7 +841,13 @@ static int mdnie_probe(struct platform_device *pdev)
 	mdnie->outdoor = OUTDOOR_OFF;
 #if defined(CONFIG_FB_MDNIE_PWM)
 	mdnie->cabc = CABC_ON;
+	mdnie->power_lut_idx = LUT_LEVEL_MANUAL_AND_INDOOR;
+	mdnie->auto_brightness = 0;
 #else
+	mdnie->cabc = CABC_OFF;
+#endif
+
+#if defined(CONFIG_FB_S5P_S6C1372)
 	mdnie->cabc = CABC_OFF;
 #endif
 	mdnie->enable = TRUE;
@@ -803,8 +880,8 @@ static int mdnie_probe(struct platform_device *pdev)
 		b_value.low = 16;
 		b_value.dim = 16;
 	} else {
-		b_value.max = 1137;	/* 71% */
-		b_value.mid = 482;	/* 38% */
+		b_value.max = 1216;	/* 76% */
+		b_value.mid = 679;	/* 39% */
 		b_value.low = 16;	/* 1% */
 		b_value.dim = 16;	/* 1% */
 	}

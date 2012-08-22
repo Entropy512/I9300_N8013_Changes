@@ -44,6 +44,7 @@ struct mipi_lcd_driver {
 struct dsim_ops {
 	u8	(*cmd_write)(void *ptr, u32 data0, u32 data1, u32 data2);
 	int	(*cmd_read)(void *ptr, u8 addr, u16 count, u8 *buf);
+	int	(*cmd_dcs_read)(void *ptr, u8 addr, u16 count, u8 *buf);
 	void	(*suspend)(void);
 	void	(*resume)(void);
 };

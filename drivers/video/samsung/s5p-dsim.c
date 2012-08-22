@@ -143,13 +143,8 @@ void set_dsim_hs_clk_toggle_count(u8 count)
 	struct dsim_global *dsim = g_dsim;
 
 	dsim->dsim_toggle_per_frame_count = count;
-	if (dsim->dsim_lcd_info->lcd_enabled) {
-		if (dsim->dsim_info->hs_toggle) {
-			s5p_dsim_frame_done_interrupt_enable(dsim, 1);
-			schedule_delayed_work(&dsim->check_hs_toggle_work, msecs_to_jiffies(60000));
-		} else
-			s5p_dsim_frame_done_interrupt_enable(dsim, count ? 1 : 0);
-	}
+	if (dsim->dsim_lcd_info->lcd_enabled)
+		s5p_dsim_frame_done_interrupt_enable(dsim, count ? 1 : 0);
 }
 
 static void dsim_work_q_handler(struct work_struct *work)
@@ -167,7 +162,7 @@ static void dsim_check_hs_toggle_work_q_handler(struct work_struct *work)
 
 	if (dsim->dsim_info->hs_toggle) {
 		dev_info(dsim->dev, "check_hs_toggle\n");
-		schedule_delayed_work(&dsim->check_hs_toggle_work, msecs_to_jiffies(60000));
+		schedule_delayed_work(&dsim->check_hs_toggle_work, msecs_to_jiffies(120000));
 	}
 }
 
@@ -386,6 +381,102 @@ clear_rx_fifo:
 
 }
 
+int s5p_dsim_dcs_rd_data(void *ptr, u8 addr, u16 count, u8 *buf)
+{
+	u32 i, temp;
+	u8 response = 0;
+	u16 rxsize;
+	u32 txhd;
+	u32 rxhd;
+	int j;
+	struct dsim_global *dsim = ptr;
+	unsigned int reg_base = dsim->reg_base;
+
+	if (dsim->mipi_ddi_pd->resume_complete == 0) {
+		dev_err(dsim->dev, "DSIM Status: SUSPEND\n");
+		return DSIM_FALSE;
+	}
+
+	mutex_lock(&dsim_rd_wr_mutex);
+	INIT_COMPLETION(dsim_rd_comp);
+
+	switch (count) {
+	case 1:
+		response = MIPI_RESP_DCS_RD_1;
+		break;
+	case 2:
+		response = MIPI_RESP_DCS_RD_2;
+		break;
+	default:
+		response = MIPI_RESP_DCS_RD_LONG;
+		break;
+	}
+
+	/* set return packet size */
+	txhd = MIPI_CMD_DSI_SET_PKT_SZ | count << 8;
+
+	writel(txhd, reg_base + S5P_DSIM_PKTHDR);
+
+	/* set address to read */
+	txhd = MIPI_CMD_DSI_RD_0 | addr << 8;
+
+	writel(txhd, reg_base + S5P_DSIM_PKTHDR);
+
+	if (!wait_for_completion_interruptible_timeout(&dsim_rd_comp, DSIM_TIMEOUT)) {
+		dev_err(dsim->dev, "ERROR:%s timout\n", __func__);
+		mutex_unlock(&dsim_rd_wr_mutex);
+		return 0;
+	}
+
+	rxhd = readl(reg_base + S5P_DSIM_RXFIFO);
+	dev_info(dsim->dev, "rxhd : %x\n", rxhd);
+	if ((u8)(rxhd & 0xff) != response) {
+		dev_err(dsim->dev, "[DSIM:ERROR]:%s wrong response rxhd : %x, response:%x\n"
+		    , __func__, rxhd, response);
+		goto error_read;
+	}
+	/* for short packet */
+	if (count <= 2) {
+		for (i = 0; i < count; i++)
+			buf[i] = (rxhd >> (8+(i*8))) & 0xff;
+		rxsize = count;
+	} else {
+		/* for long packet */
+		rxsize = (u16)((rxhd & 0x00ffff00) >> 8);
+		dev_info(dsim->dev, "rcv size : %d\n", rxsize);
+		if (rxsize != count) {
+			dev_err(dsim->dev, "[DSIM:ERROR]:%s received data size mismatch received : %d, requested : %d\n",
+				__func__, rxsize, count);
+			goto error_read;
+		}
+
+		for (i = 0; i < rxsize>>2; i++) {
+			temp = readl(reg_base + S5P_DSIM_RXFIFO);
+			dev_info(dsim->dev, "pkt : %08x\n", temp);
+			for (j = 0; j < 4; j++) {
+				buf[(i*4)+j] = (u8)(temp>>(j*8))&0xff;
+				/* printk("Value : %02x\n",(temp>>(j*8))&0xff); */
+			}
+		}
+		if (rxsize % 4) {
+			temp = readl(reg_base + S5P_DSIM_RXFIFO);
+			dev_info(dsim->dev, "pkt-l : %08x\n", temp);
+			for (j = 0; j < rxsize%4; j++) {
+				buf[(i*4)+j] = (u8)(temp>>(j*8))&0xff;
+				/* printk("Value : %02x\n",(temp>>(j*8))&0xff); */
+			}
+		}
+	}
+
+	mutex_unlock(&dsim_rd_wr_mutex);
+	return rxsize;
+
+error_read:
+	mutex_unlock(&dsim_rd_wr_mutex);
+	return 0;
+
+}
+
 static irqreturn_t s5p_dsim_isr(int irq, void *dev_id)
 {
 	int i;
@@ -444,7 +535,7 @@ static irqreturn_t s5p_dsim_isr(int irq, void *dev_id)
 							s5p_dsim_toggle_hs_clock(dsim->reg_base);
 							if (!dsim->dsim_toggle_per_frame_count) {
 								s5p_dsim_frame_done_interrupt_enable(dsim, 0);
-								if (likely(dsim->dsim_info->hs_toggle))
+								if (likely(dsim->dsim_info->hs_toggle - 1))
 									schedule_delayed_work(&dsim->dsim_work, dsim->dsim_info->hs_toggle);
 							}
 							if (dsim->dsim_toggle_per_frame_count)
@@ -990,10 +1081,9 @@ static void s5p_dsim_interrupt_mask_set(struct dsim_global *dsim)
 	writel(int_stat, dsim->reg_base + S5P_DSIM_INTMSK);
 }
 
-int s5p_dsim_fifo_clear(void)
+int s5p_dsim_fifo_clear(struct dsim_global *dsim)
 {
 	int dsim_count = 0, ret;
-	struct dsim_global *dsim = g_dsim;
 
 	writel(SwRstRelease, dsim->reg_base + S5P_DSIM_INTSRC);
 
@@ -1101,6 +1191,9 @@ void s5p_dsim_late_resume(void)
 	/* s5p_dsim_set_interrupt_mask(dsim->reg_base, AllDsimIntr, 0); */
 
 	dsim->mipi_ddi_pd->resume_complete = 1;
+
+	if (s5p_dsim_fifo_clear(dsim) == 0)
+		dev_err(dsim->dev, "dsim fifo clear fail!!!\n");
 
 	dev_info(dsim->dev, "-%s\n", __func__);
 
@@ -1224,10 +1317,15 @@ static int hs_toggle_store(struct device *dev,
 	else {
 		dev_info(dev, "%s - %d, %d\n", __func__, jiffies_to_msecs(dsim->dsim_info->hs_toggle), value);
 
-		if (value == 1)
+		if (value == 1) {
 			dsim->dsim_info->hs_toggle = msecs_to_jiffies(3000);
-		else
+			s5p_dsim_frame_done_interrupt_enable(dsim, 1);
+			schedule_delayed_work(&dsim->check_hs_toggle_work, msecs_to_jiffies(120000));
+		} else {
 			dsim->dsim_info->hs_toggle = 0;
+			s5p_dsim_frame_done_interrupt_enable(dsim, 0);
+			cancel_delayed_work(&dsim->check_hs_toggle_work);
+		}
 	}
 	return size;
 }
@@ -1254,6 +1352,7 @@ static DEVICE_ATTR(dsim_dump, 0444, dsim_dump_show, NULL);
 static struct dsim_ops s5p_dsim_ops = {
 	.cmd_write	= s5p_dsim_wr_data,
 	.cmd_read	= s5p_dsim_rd_data,
+	.cmd_dcs_read	= s5p_dsim_dcs_rd_data,
 	.suspend	= s5p_dsim_early_suspend,
 	.resume		= s5p_dsim_late_resume,
 };
@@ -1277,7 +1376,8 @@ static int s5p_dsim_probe(struct platform_device *pdev)
 	dsim->pd = to_dsim_plat(&pdev->dev);
 	if (!dsim->pd) {
 		dev_err(&pdev->dev, "platform data is NULL\n");
-		return -EINVAL;
+		ret = -EINVAL;
+		goto err_plat;
 	}
 
 	dsim->dev = &pdev->dev;
@@ -1298,7 +1398,8 @@ static int s5p_dsim_probe(struct platform_device *pdev)
 	dsim->clock = clk_get(&pdev->dev, dsim->pd->clk_name);
 	if (IS_ERR(dsim->clock)) {
 		dev_err(&pdev->dev, "failed to get dsim clock source\n");
-		return -EINVAL;
+		ret = -EINVAL;
+		goto err_clk_get;
 	}
 
 	clk_enable(dsim->clock);
@@ -1433,6 +1534,11 @@ mipi_drv_err:
 
 err_clk_disable:
 	clk_disable(dsim->clock);
+
+err_clk_get:
+err_plat:
+	kfree(dsim);
+
 err_alloc:
 	return ret;
 }

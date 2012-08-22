@@ -332,7 +332,13 @@ static int s3cfb_probe(struct platform_device *pdev)
 	/* enable the power domain */
 	pm_runtime_get_sync(&pdev->dev);
 #endif
+
 	fbfimd = kzalloc(sizeof(struct s3cfb_fimd_desc), GFP_KERNEL);
+	if (!fbfimd) {
+		printk(KERN_ERR "failed to allocate for fimd fb descriptor\n");
+		ret = -ENOMEM;
+		goto err_fimd_desc;
+	}
 
 	if (FIMD_MAX == 2)
 		fbfimd->dual = 1;
@@ -525,6 +531,7 @@ err1:
 	for (i = 0; i < FIMD_MAX; i++)
 		pdata->clk_off(pdev, &fbdev[i]->clock);
 err0:
+err_fimd_desc:
 	return ret;
 }
 
@@ -753,16 +760,6 @@ void s3cfb_late_resume(struct early_suspend *h)
 
 #ifdef CONFIG_FB_S5P_MIPI_DSIM
 	s5p_dsim_late_resume();
-
-	if (s5p_dsim_fifo_clear() == 0) {
-		s5p_dsim_early_suspend();
-		usleep_range(10000, 10000);
-		s5p_dsim_late_resume();
-		if (s5p_dsim_fifo_clear() == 0)
-			pr_info("dsim resume fail!!!\n");
-	}
-
-	usleep_range(10000, 10000);
 #endif
 
 #if defined(CONFIG_FB_S5P_DUMMYLCD)
@@ -779,6 +776,10 @@ void s3cfb_late_resume(struct early_suspend *h)
 		else
 			/* fbdev[i]->regs_org should be non-zero value */
 			BUG();
+
+#if defined(CONFIG_FB_MDNIE_PWM)
+		set_mdnie_pwm_value(g_mdnie, 0);
+#endif
 
 		if (pdata->set_display_path)
 			pdata->set_display_path();

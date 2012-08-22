@@ -332,9 +332,10 @@ static int update_brightness(struct lcd_info *lcd)
 {
 	int ret;
 
-#if defined(CONFIG_MACH_C1) || defined(CONFIG_MACH_C1VZW) || \
+#if defined(CONFIG_MACH_C1) || \
+	defined(CONFIG_MACH_M3) || \
 	defined(CONFIG_MACH_M0) || defined(CONFIG_MACH_SLP_PQ) || \
-	defined(CONFIG_MACH_SLP_PQ_LTE) || defined(CONFIG_MACH_M3)
+	defined(CONFIG_MACH_SLP_PQ_LTE)
 #else
 	ret = s6e8ax0_gamma_ctl(lcd);
 	if (ret)

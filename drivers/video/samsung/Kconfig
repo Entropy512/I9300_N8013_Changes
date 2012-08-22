@@ -192,6 +192,12 @@ config FB_S5P_S6E8AA0
        ---help---
          This enables support for Samsung S6E8AA0 MIPI LCD
 
+config FB_S5P_EA8061
+       bool "EA8061 MIPI LCD"
+       depends on FB_S5P_MIPI_DSIM
+       ---help---
+         This enables support for Samsung EA8061 MIPI LCD
+
 config FB_S5P_S6E8AB0
        bool "S6E8AB0 MIPI LCD"
        depends on MACH_PX && FB_S5P_MIPI_DSIM
@@ -199,7 +205,7 @@ config FB_S5P_S6E8AB0
          This enables support for Samsung S6E8AB0 MIPI LCD
 
 config FB_S5P_S6D6AA1
-       bool "S6E8AB0 MIPI LCD"
+       bool "S6D6AA1 MIPI LCD"
        depends on FB_S5P_MIPI_DSIM
        ---help---
          This enables support for Samsung S6D6AA1 MIPI LCD

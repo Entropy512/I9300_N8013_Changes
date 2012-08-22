@@ -183,7 +183,10 @@ int s3cfb_enable_window(struct s3cfb_global *fbdev, int id)
 #endif
 #if defined(CONFIG_CPU_EXYNOS4212) || defined(CONFIG_CPU_EXYNOS4412)
 #ifdef CONFIG_BUSFREQ_OPP
-	if (id != CONFIG_FB_S5P_DEFAULT_WINDOW)
+	if (CONFIG_FB_S5P_DEFAULT_WINDOW == 3 &&
+		id == CONFIG_FB_S5P_DEFAULT_WINDOW-1)
+		dev_lock(fbdev->bus_dev, fbdev->dev, 267160);
+	else if (id != CONFIG_FB_S5P_DEFAULT_WINDOW)
 		dev_lock(fbdev->bus_dev, fbdev->dev, 133133);
 #endif
 #endif
