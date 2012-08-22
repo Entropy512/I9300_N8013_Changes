@@ -13,16 +13,12 @@
  *
  */
 
-#ifndef __MXT540E_H__
-#define __MXT540E_H__
+#ifndef __MXT_H__
+#define __MXT_H__
 
-#define MXT540E_DEV_NAME "Atmel MXT540E"
-
-#define MXT540E_SW_RESET_TIME		300	/* msec */
-#define MXT540E_HW_RESET_TIME		130	/* msec */
-
-enum {
-	RESERVED_T0 = 0,
+#define MXT224_MAX_MT_FINGERS	10
+#define MXT_DEV_NAME "Atmel MXT224S"
+enum { RESERVED_T0 = 0,
 	RESERVED_T1,
 	DEBUG_DELTAS_T2,
 	DEBUG_REFERENCES_T3,
@@ -57,7 +53,7 @@ enum {
 	TOUCH_XSLIDERSET_T32,
 	RESERVED_T33,
 	GEN_MESSAGEBLOCK_T34,
-	SPARE_T35,
+	SPT_GENERICDATA_T35,
 	RESERVED_T36,
 	DEBUG_DIAGNOSTIC_T37,
 	SPT_USERDATA_T38,
@@ -74,21 +70,22 @@ enum {
 	SPARE_T49,
 	SPARE_T50,
 	SPARE_T51,
-	TOUCH_PROXKEY_T52,
+	TOUCH_PROXIMITY_KEY_T52,
 	GEN_DATASOURCE_T53,
 	SPARE_T54,
-	ADAPTIVE_T55,
-	SPARE_T56,
-	SPT_GENERICDATA_T57,
+	PROCI_ADAPTIVETHRESHOLD_T55,
+	PROCI_SHIELDLESS_T56,
+	PROCI_EXTRATOUCHSCREENDATA_T57,
 	SPARE_T58,
 	SPARE_T59,
 	SPARE_T60,
 	SPT_TIMER_T61,
+	PROCG_NOISESUPPRESSION_T62,
 	RESERVED_T255 = 255,
 };
-
-struct mxt540e_platform_data {
+struct mxt224s_platform_data {
 	int max_finger_touches;
+	const u8 **config;
 	const u8 **config_e;
 	int gpio_read_done;
 	int min_x;
@@ -101,35 +98,53 @@ struct mxt540e_platform_data {
 	int max_w;
 	u8 chrgtime_batt;
 	u8 chrgtime_charging;
+	u8 atchcalst;
+	u8 atchcalsthr;
 	u8 tchthr_batt;
 	u8 tchthr_charging;
-	u8 actvsyncsperx_batt;
-	u8 actvsyncsperx_charging;
+	u8 tchthr_batt_e;
+	u8 tchthr_charging_e;
 	u8 calcfg_batt_e;
 	u8 calcfg_charging_e;
+	u8 atchcalsthr_e;
 	u8 atchfrccalthr_e;
 	u8 atchfrccalratio_e;
+	u8 idlesyncsperx_batt;
+	u8 idlesyncsperx_charging;
+	u8 actvsyncsperx_batt;
+	u8 actvsyncsperx_charging;
+	u8 idleacqint_batt;
+	u8 idleacqint_charging;
+	u8 actacqint_batt;
+	u8 actacqint_charging;
+	u8 xloclip_batt;
+	u8 xloclip_charging;
+	u8 xhiclip_batt;
+	u8 xhiclip_charging;
+	u8 yloclip_batt;
+	u8 yloclip_charging;
+	u8 yhiclip_batt;
+	u8 yhiclip_charging;
+	u8 xedgectrl_batt;
+	u8 xedgectrl_charging;
+	u8 xedgedist_batt;
+	u8 xedgedist_charging;
+	u8 yedgectrl_batt;
+	u8 yedgectrl_charging;
+	u8 yedgedist_batt;
+	u8 yedgedist_charging;
+	u8 tchhyst_batt;
+	u8 tchhyst_charging;
 	const u8 *t48_config_batt_e;
 	const u8 *t48_config_chrg_e;
 	void (*power_on) (void);
 	void (*power_off) (void);
-	void (*power_on_with_oleddet) (void);
-	void (*power_off_with_oleddet) (void);
 	void (*register_cb) (void *);
 	void (*read_ta_status) (void *);
 };
+typedef enum
+    { MXT_PAGE_UP = 0x01, MXT_PAGE_DOWN = 0x02, MXT_DELTA_MODE =
+   0x10, MXT_REFERENCE_MODE = 0x11, MXT_CTE_MODE = 0x31
+} diagnostic_debug_command;
 
-enum {
-	MXT_PAGE_UP = 0x01,
-	MXT_PAGE_DOWN = 0x02,
-	MXT_DELTA_MODE = 0x10,
-	MXT_REFERENCE_MODE = 0x11,
-	MXT_CTE_MODE = 0x31
-};
-
-int get_tsp_status(void);
-extern struct class *sec_class;
-#if defined(CONFIG_MACH_T0)
-extern bool is_cable_attached;
-#endif
-#endif
+#endif				/*  */

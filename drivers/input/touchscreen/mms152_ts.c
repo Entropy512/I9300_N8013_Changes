@@ -46,20 +46,15 @@
 #include <mach/cpufreq.h>
 #include <mach/dev.h>
 
-#include <linux/platform_data/mms_ts.h>
+#include <linux/platform_data/mms152_ts.h>
 
 #include <asm/unaligned.h>
-//#include "mms_ts_fw.h"
 
 #ifdef CONFIG_INPUT_FBSUSPEND
 #ifdef CONFIG_DRM
 #include <drm/drm_backlight.h>
 #endif
 #include <linux/fb.h>
-#endif
-
-#ifdef CONFIG_SLP_CHECK_CPU_LOAD
-#include <linux/cpufreq_slp.h>
 #endif
 
 #define MAX_FINGERS		10
@@ -76,12 +71,12 @@
 
 #define MMS_INPUT_EVENT_PKT_SZ	0x0F
 #define MMS_INPUT_EVENT0	0x10
-#define FINGER_EVENT_SZ	8
+#define FINGER_EVENT_SZ	6
 
 #define MMS_TSP_REVISION	0xF0
 #define MMS_HW_REVISION		0xF1
 #define MMS_COMPAT_GROUP	0xF2
-#define MMS_FW_VERSION		0xF3
+#define MMS_FW_VERSION		0xF4
 
 enum {
 	ISP_MODE_FLASH_ERASE = 0x59F3,
@@ -116,27 +111,10 @@ enum {
 
 #endif
 
-#if defined(CONFIG_MACH_M0)
-#define  TSP_FW_UPDATEABLE_HW_REV  11
-#elif defined(CONFIG_MACH_C1) && !defined(CONFIG_TARGET_LOCALE_KOR)
-#define  TSP_FW_UPDATEABLE_HW_REV  6
-#elif defined(CONFIG_MACH_C1_KOR_SKT)
-#define  TSP_FW_UPDATEABLE_HW_REV  9
-#elif defined(CONFIG_MACH_C1_KOR_KT)
-#define  TSP_FW_UPDATEABLE_HW_REV  9
-#elif defined(CONFIG_MACH_C1_KOR_LGT)
-#define  TSP_FW_UPDATEABLE_HW_REV  6
-/*FIXME: will be removed, after separate TSP driver for slp*/
-#elif defined(CONFIG_MACH_SLP_PQ)
-#define  TSP_FW_UPDATEABLE_HW_REV  15
-#else
-#define  TSP_FW_UPDATEABLE_HW_REV  0
-#endif
-
 #ifdef SEC_TSP_FACTORY_TEST
-#define TX_NUM		26
-#define RX_NUM		14
-#define NODE_NUM	364	/* 26x14 */
+#define TX_NUM		29
+#define RX_NUM		17
+#define NODE_NUM	493	/* 29x17 */
 
 /* VSC(Vender Specific Command)  */
 #define MMS_VSC_CMD			0xB0	/* vendor specific command */
@@ -161,10 +139,6 @@ enum {
 #define TOUCH_BOOSTER			1
 #define TOUCH_BOOSTER_OFF_TIME		100
 #define TOUCH_BOOSTER_CHG_TIME		200
-#elif defined(CONFIG_MACH_SLP_PQ)
-#define TOUCH_BOOSTER			1
-#define TOUCH_BOOSTER_OFF_TIME		100
-#define TOUCH_BOOSTER_CHG_TIME		200
 #else
 #define TOUCH_BOOSTER			0
 #endif
@@ -172,27 +146,12 @@ enum {
 struct device *sec_touchscreen;
 static struct device *bus_dev;
 
-int touch_is_pressed = 0;
-
-#if defined(CONFIG_TARGET_LOCALE_KOR)
-static int noise_mode_indicator;
-#endif
+int touch_is_pressed;
 
 #define ISC_DL_MODE	1
 
-/* 4.8" OCTA LCD */
-#define FW_VERSION_4_8 0xBB
-/* 4.65" OCTA LCD */
-#ifdef CONFIG_SLP
-#define FW_VERSION_4_65 0x66
-#include "465_SMD_V66.h"
-#define FW_VERSION_4_77 0x50
-#include "477_SMD_V50.h"
-#else
-#define FW_VERSION_4_65 0xA8
-#include "M0_D2_C1_VA8.h"
-#endif
-
+/* 5.55" OCTA LCD */
+#define FW_VERSION 0x9
 #define MAX_FW_PATH 255
 #define TSP_FW_FILENAME "melfas_fw.bin"
 
@@ -256,8 +215,58 @@ static const unsigned char crc1_buf[31] = {
 	0x30, 0xB2, 0xF1, 0x73, 0x58, 0xDA, 0x99
 };
 
-static tISCFWInfo_t mbin_info[SECTION_NUM];
-static tISCFWInfo_t ts_info[SECTION_NUM];	/* read F/W version from IC */
+enum {
+	ISC_NONE = -1,
+	ISC_SUCCESS = 0,
+	ISC_FILE_OPEN_ERROR,
+	ISC_FILE_CLOSE_ERROR,
+	ISC_FILE_FORMAT_ERROR,
+	ISC_WRITE_BUFFER_ERROR,
+	ISC_I2C_ERROR,
+	ISC_UPDATE_MODE_ENTER_ERROR,
+	ISC_CRC_ERROR,
+	ISC_VALIDATION_ERROR,
+	ISC_COMPATIVILITY_ERROR,
+	ISC_UPDATE_SECTION_ERROR,
+	ISC_SLAVE_ERASE_ERROR,
+	ISC_SLAVE_DOWNLOAD_ERROR,
+	ISC_DOWNLOAD_WHEN_SLAVE_IS_UPDATED_ERROR,
+	ISC_INITIAL_PACKET_ERROR,
+	ISC_NO_NEED_UPDATE_ERROR,
+	ISC_LIMIT
+};
+
+enum {
+	EC_NONE = -1,
+	EC_DEPRECATED = 0,
+	EC_BOOTLOADER_RUNNING = 1,
+	EC_BOOT_ON_SUCCEEDED = 2,
+	EC_ERASE_END_MARKER_ON_SLAVE_FINISHED = 3,
+	EC_SLAVE_DOWNLOAD_STARTS = 4,
+	EC_SLAVE_DOWNLOAD_FINISHED = 5,
+	EC_2CHIP_HANDSHAKE_FAILED = 0x0E,
+	EC_ESD_PATTERN_CHECKED = 0x0F,
+	EC_LIMIT
+};
+
+enum {
+	SEC_NONE = -1,
+	SEC_BOOTLOADER = 0,
+	SEC_CORE,
+	SEC_PRIVATE_CONFIG,
+	SEC_PUBLIC_CONFIG,
+	SEC_LIMIT
+};
+
+struct tISCFWInfo_t {
+	unsigned char version;
+	unsigned char compatible_version;
+	unsigned char start_addr;
+	unsigned char end_addr;
+};
+
+static struct tISCFWInfo_t mbin_info[SECTION_NUM];
+static struct tISCFWInfo_t ts_info[SECTION_NUM];
 static bool section_update_flag[SECTION_NUM];
 
 const struct firmware *fw_mbin[SECTION_NUM];
@@ -288,7 +297,7 @@ struct mms_ts_info {
 	int max_y;
 	bool invert_x;
 	bool invert_y;
-	const u8			*config_fw_version;
+	const u8 *config_fw_version;
 	int irq;
 	char *fw_name;
 	int (*power) (int on);
@@ -311,8 +320,8 @@ struct mms_ts_info {
 	enum fw_flash_mode fw_flash_mode;
 	void (*register_cb)(void *);
 	struct tsp_callbacks callbacks;
-	bool			ta_status;
-	bool			noise_mode;
+	bool ta_status;
+	bool noise_mode;
 
 #if defined(SEC_TSP_DEBUG) || defined(SEC_TSP_VERBOSE_DEBUG)
 	unsigned char finger_state[MAX_FINGERS];
@@ -321,16 +330,16 @@ struct mms_ts_info {
 #if defined(SEC_TSP_FW_UPDATE)
 	u8 fw_update_state;
 #endif
-u8				fw_ic_ver;
-
+	u8 fw_ic_ver;
+	char panel;
 #if defined(SEC_TSP_FACTORY_TEST)
-	struct list_head			cmd_list_head;
-	u8			cmd_state;
-	char			cmd[TSP_CMD_STR_LEN];
-	int			cmd_param[TSP_CMD_PARAM_NUM];
-	char			cmd_result[TSP_CMD_RESULT_STR_LEN];
-	struct mutex			cmd_lock;
-	bool			cmd_is_running;
+	struct list_head cmd_list_head;
+	u8 cmd_state;
+	char cmd[TSP_CMD_STR_LEN];
+	int cmd_param[TSP_CMD_PARAM_NUM];
+	char cmd_result[TSP_CMD_RESULT_STR_LEN];
+	struct mutex cmd_lock;
+	bool cmd_is_running;
 
 	unsigned int reference[NODE_NUM];
 	unsigned int raw[NODE_NUM]; /* CM_ABS */
@@ -341,7 +350,7 @@ u8				fw_ic_ver;
 
 	int (*lcd_type) (void);
 
-#ifdef	CONFIG_INPUT_FBSUSPEND
+#ifdef CONFIG_INPUT_FBSUSPEND
 	struct	notifier_block	fb_notif;
 	bool was_enabled_at_suspend;
 #endif
@@ -360,11 +369,6 @@ static void mms_ts_early_suspend(struct early_suspend *h);
 static void mms_ts_late_resume(struct early_suspend *h);
 #endif
 
-#if TOUCH_BOOSTER
-static bool dvfs_lock_status = false;
-static bool press_status = false;
-#endif
-
 #if defined(SEC_TSP_FACTORY_TEST)
 #define TSP_CMD(name, func) .cmd_name = name, .cmd_func = func
 
@@ -381,8 +385,8 @@ static void get_config_ver(void *device_data);
 static void get_threshold(void *device_data);
 static void module_off_master(void *device_data);
 static void module_on_master(void *device_data);
-static void module_off_slave(void *device_data);
-static void module_on_slave(void *device_data);
+/*static void module_off_slave(void *device_data);
+static void module_on_slave(void *device_data);*/
 static void get_chip_vendor(void *device_data);
 static void get_chip_name(void *device_data);
 static void get_reference(void *device_data);
@@ -486,7 +490,7 @@ static void set_dvfs_lock(struct mms_ts_info *info, uint32_t on)
 			if (ret < 0) {
 				pr_err("%s: dev lock failed(%d)\n",\
 							__func__, __LINE__);
-}
+			}
 
 			ret = exynos_cpufreq_lock(DVFS_LOCK_ID_TSP,
 							info->cpufreq_level);
@@ -660,13 +664,12 @@ static void release_all_fingers(struct mms_ts_info *info)
 	struct i2c_client *client = info->client;
 	int i;
 
-	printk(KERN_DEBUG "[TSP] %s\n", __func__);
+	dev_dbg(&client->dev, "[TSP] %s\n", __func__);
 
 	for (i = 0; i < MAX_FINGERS; i++) {
 #ifdef SEC_TSP_DEBUG
-		if (info->finger_state[i] == 1) {
+		if (info->finger_state[i] == 1)
 			dev_notice(&client->dev, "finger %d up(force)\n", i);
-		}
 #endif
 		info->finger_state[i] = 0;
 		input_mt_slot(info->input_dev, i);
@@ -744,8 +747,8 @@ static void melfas_ta_cb(struct tsp_callbacks *cb, bool ta_status)
 		} else {
 			dev_notice(&client->dev, "TA disconnect!!!\n");
 			i2c_smbus_write_byte_data(info->client, 0x33, 0x2);
-		mms_set_noise_mode(info);
-}
+			mms_set_noise_mode(info);
+		}
 	}
 
 /*	if (!ta_status)
@@ -757,13 +760,15 @@ static irqreturn_t mms_ts_interrupt(int irq, void *dev_id)
 {
 	struct mms_ts_info *info = dev_id;
 	struct i2c_client *client = info->client;
+#ifdef NEW_FIRMWARE
+	u8 buf[MAX_FINGERS * 8] = { 0 };
+#else
 	u8 buf[MAX_FINGERS * FINGER_EVENT_SZ] = { 0 };
+#endif
 	int ret;
 	int i;
 	int sz;
-	u8 finger_event_sz;
 	u8 reg = MMS_INPUT_EVENT0;
-	int _touch_is_pressed = 0;
 	struct i2c_msg msg[] = {
 		{
 		 .addr = client->addr,
@@ -777,14 +782,7 @@ static irqreturn_t mms_ts_interrupt(int irq, void *dev_id)
 		     },
 	};
 
-#ifdef CONFIG_SLP
-	if (info->input_event)
-		info->input_event(info);
-#endif
-
 	sz = i2c_smbus_read_byte_data(client, MMS_INPUT_EVENT_PKT_SZ);
-
-	#if !defined(CONFIG_TARGET_LOCALE_KOR)
 	if (sz < 0) {
 		dev_err(&client->dev, "%s bytes=%d\n", __func__, sz);
 		for (i = 0; i < 50; i++) {
@@ -800,26 +798,7 @@ static irqreturn_t mms_ts_interrupt(int irq, void *dev_id)
 			goto out;
 		}
 	}
-	#else
-	if (sz < 0) {
-		dev_err(&client->dev, "%s bytes=%d\n", __func__, sz);
-		for (i = 0; i < 5; i++) {
-			msleep(20);
-			sz = i2c_smbus_read_byte_data(client,
-						      MMS_INPUT_EVENT_PKT_SZ);
-			if (sz > 0)
-				break;
-		}
 
-		if (i == 5) {
-			dev_dbg(&client->dev, "[TSP] i2c failed E1... reset!!\n");
-			reset_mms_ts(info);
-			goto out;
-		}
-	}
-	#endif
-
-	/* BUG_ON(sz > MAX_FINGERS*FINGER_EVENT_SZ); */
 	if (sz == 0)
 		goto out;
 
@@ -834,27 +813,23 @@ static irqreturn_t mms_ts_interrupt(int irq, void *dev_id)
 		dev_err(&client->dev,
 			"failed to read %d bytes of touch data (%d)\n",
 			sz, ret);
-			#if !defined(CONFIG_TARGET_LOCALE_KOR)
-			goto out;
-			#else
-			if (ret < 0) {
-				dev_err(&client->dev,
-					"%s bytes=%d\n", __func__, sz);
-				for (i = 0; i < 5; i++) {
-					msleep(20);
-					ret = i2c_transfer(client->adapter,
-						msg, ARRAY_SIZE(msg));
-					if (ret > 0)
-						break;
-				}
-				if (i == 5) {
-					dev_dbg(&client->dev,
-						"[TSP] i2c failed E2... reset!!\n");
-					reset_mms_ts(info);
-					goto out;
-				}
+		if (ret < 0) {
+			dev_err(&client->dev,
+				"%s bytes=%d\n", __func__, sz);
+			for (i = 0; i < 5; i++) {
+				msleep(20);
+				ret = i2c_transfer(client->adapter,
+					msg, ARRAY_SIZE(msg));
+				if (ret > 0)
+					break;
 			}
-			#endif
+			if (i == 5) {
+				dev_dbg(&client->dev,
+					"[TSP] i2c failed E2... reset!!\n");
+				reset_mms_ts(info);
+				goto out;
+			}
+		}
 	}
 #if defined(VERBOSE_DEBUG)
 	print_hex_dump(KERN_DEBUG, "mms_ts raw: ",
@@ -869,31 +844,21 @@ static irqreturn_t mms_ts_interrupt(int irq, void *dev_id)
 
 	if (buf[0] == 0x0E) { /* NOISE MODE */
 		dev_dbg(&client->dev, "[TSP] noise mode enter!!\n");
-#if defined(CONFIG_TARGET_LOCALE_KOR)
-		if (noise_mode_indicator == 0) {
-			noise_mode_indicator++;
-			dev_dbg(&client->dev, "[TSP] mms reset by noise mode!!\n");
-			reset_mms_ts(info);
-			info->noise_mode = 0;
-		} else {
-			info->noise_mode = 1 ;
-			dev_dbg(&client->dev, "[TSP] set noise mode!!\n");
-			mms_set_noise_mode(info);
-		}
-#else
 		info->noise_mode = 1 ;
 		mms_set_noise_mode(info);
-#endif
 		goto out;
 	}
 
+	touch_is_pressed = 0;
 	for (i = 0; i < sz; i += FINGER_EVENT_SZ) {
 		u8 *tmp = &buf[i];
 		int id = (tmp[0] & 0xf) - 1;
 		int x = tmp[2] | ((tmp[1] & 0xf) << 8);
-		int y = tmp[3] | (((tmp[1] >> 4) & 0xf) << 8);
+		int y = tmp[3] | ((tmp[1] >> 4) << 8);
+#ifdef NEW_FIRMWARE
 		int angle = (tmp[5] >= 127) ? (-(256 - tmp[5])) : tmp[5];
 		int palm = (tmp[0] & 0x10) >> 4;
+#endif
 		if (info->invert_x) {
 			x = info->max_x - x;
 			if (x < 0)
@@ -912,85 +877,67 @@ static irqreturn_t mms_ts_interrupt(int irq, void *dev_id)
 		}
 
 		if ((tmp[0] & 0x80) == 0) {
-#if 0 /*defined(SEC_TSP_DEBUG)*/
-			dev_dbg(&client->dev,
-				"finger id[%d]: x=%d y=%d p=%d w=%d major=%d minor=%d angle=%d palm=%d\n",
-				id, x, y, tmp[5], tmp[4], tmp[6], tmp[7]
-				, angle, palm);
-#else
-			if (info->finger_state[id] != 0) {
-#if defined(SEC_TSP_EVENT_DEBUG) && defined(CONFIG_TARGET_LOCALE_KOR)
-				printk(KERN_DEBUG "[TSP] POS[%d](%4d,%4d)[U] tp = %d\n",
-					id, x, y, touch_is_pressed);
-#else
-				dev_notice(&client->dev,
-					"finger [%d] up, palm %d\n", id, palm);
-#endif
-			}
-#endif
 			input_mt_slot(info->input_dev, id);
 			input_mt_report_slot_state(info->input_dev,
 						   MT_TOOL_FINGER, false);
-
-#if defined(SEC_TSP_DEBUG) || defined(SEC_TSP_VERBOSE_DEBUG)
-			info->finger_state[id] = 0;
+#ifdef NEW_FIRMWARE
+			if (info->finger_state[id] != 0) {
+				info->finger_state[id] = 0;
+				dev_notice(&client->dev,
+					"R [%2d],([%4d],[%3d])",
+					id, x, y);
+			}
+#else
+			if (info->finger_state[id] != 0) {
+				info->finger_state[id] = 0;
+				dev_notice(&client->dev,
+					"R [%2d],([%4d],[%3d]),S:%d W:%d",
+					id, x, y, tmp[4], tmp[5]);
+			}
 #endif
 			continue;
 		}
-
+#ifdef NEW_FIRMWARE
 		input_mt_slot(info->input_dev, id);
 		input_mt_report_slot_state(info->input_dev,
 					   MT_TOOL_FINGER, true);
-		input_report_abs(info->input_dev, ABS_MT_WIDTH_MAJOR, tmp[4]);
 		input_report_abs(info->input_dev, ABS_MT_POSITION_X, x);
 		input_report_abs(info->input_dev, ABS_MT_POSITION_Y, y);
+		input_report_abs(info->input_dev, ABS_MT_WIDTH_MAJOR, tmp[4]);
 		input_report_abs(info->input_dev, ABS_MT_TOUCH_MAJOR, tmp[6]);
 		input_report_abs(info->input_dev, ABS_MT_TOUCH_MINOR, tmp[7]);
 		input_report_abs(info->input_dev, ABS_MT_ANGLE, angle);
 		input_report_abs(info->input_dev, ABS_MT_PALM, palm);
 
-#if 0/*defined(SEC_TSP_DEBUG)*/
 		if (info->finger_state[id] == 0) {
 			info->finger_state[id] = 1;
-			dev_dbg(&client->dev,
-				"finger id[%d]: x=%d y=%d w=%d major=%d minor=%d angle=%d palm=%d\n",
-				id, x, y, tmp[4], tmp[6], tmp[7]
-				, angle, palm);
-
-			if (finger_event_sz == 10)
-				dev_dbg(&client->dev, \
-					"pressure = %d\n", tmp[8]);
-		}
-#else
-		if (info->finger_state[id] == 0) {
-			info->finger_state[id] = 1;
-#if defined(SEC_TSP_EVENT_DEBUG) && defined(CONFIG_TARGET_LOCALE_KOR)
-			printk(KERN_DEBUG "[TSP] POS[%d](%4d,%4d)[D] tp = %d\n",
-					id, x, y, touch_is_pressed);
-#else
 			dev_notice(&client->dev,
-				"finger [%d] down, palm %d\n", id, palm);
-#endif
+				"P [%2d],([%4d],[%3d]) w=%d, major=%d, minor=%d, angle=%d, palm=%d",
+				id, x, y, tmp[4], tmp[6], tmp[7], angle, palm);
+		}
+#else
+		input_mt_slot(info->input_dev, id);
+		input_mt_report_slot_state(info->input_dev,
+					   MT_TOOL_FINGER, true);
+		input_report_abs(info->input_dev, ABS_MT_POSITION_X, x);
+		input_report_abs(info->input_dev, ABS_MT_POSITION_Y, y);
+		input_report_abs(info->input_dev, ABS_MT_TOUCH_MAJOR, tmp[4]);
+		input_report_abs(info->input_dev, ABS_MT_PRESSURE, tmp[5]);
+
+		if (info->finger_state[id] == 0) {
+			info->finger_state[id] = 1;
+			dev_notice(&client->dev,
+				"P [%2d],([%4d],[%3d]),S:%d W:%d",
+				id, x, y, tmp[4], tmp[5]);
 		}
 #endif
-
+		touch_is_pressed++;
 	}
 	input_sync(info->input_dev);
-	touch_is_pressed = 0;
-
-	for (i = 0; i < MAX_FINGERS; i++) {
-		if (info->finger_state[i] == 1)
-			touch_is_pressed++;
-	}
 
 #if TOUCH_BOOSTER
 	set_dvfs_lock(info, !!touch_is_pressed);
 #endif
-
-#ifdef CONFIG_SLP_CHECK_CPU_LOAD
-	cpu_load_touch_event(!!touch_is_pressed);
-#endif
-
 
 out:
 	return IRQ_HANDLED;
@@ -1211,7 +1158,7 @@ static int mms100_seek_section_info(void)
 	return ISC_SUCCESS;
 }
 
-static eISCRet_t mms100_compare_version_info(struct i2c_client *_client)
+static int mms100_compare_version_info(struct i2c_client *_client)
 {
 	int i, ret;
 	unsigned char expected_compatibility[SECTION_NUM];
@@ -1472,18 +1419,16 @@ static int mms100_update_section_data(struct i2c_client *_client)
 	return ISC_SUCCESS;
 }
 
-static eISCRet_t mms100_open_mbinary(struct i2c_client *_client)
+static int mms100_open_mbinary(struct i2c_client *_client)
 {
-	int i;
-	char file_name[64];
 	int ret = 0;
 
 	ret += request_firmware(&(fw_mbin[1]),\
-				"tsp_melfas/CORE.fw", &_client->dev);
+				"tsp_melfas/note/CORE.fw", &_client->dev);
 	ret += request_firmware(&(fw_mbin[2]),\
-				"tsp_melfas/PRIV.fw", &_client->dev);
+				"tsp_melfas/note/PRIV.fw", &_client->dev);
 	ret += request_firmware(&(fw_mbin[3]),\
-				"tsp_melfas/PUBL.fw", &_client->dev);
+				"tsp_melfas/note/PUBL.fw", &_client->dev);
 
 	if (!ret)
 		return ISC_SUCCESS;
@@ -1493,7 +1438,7 @@ static eISCRet_t mms100_open_mbinary(struct i2c_client *_client)
 	}
 }
 
-static eISCRet_t mms100_close_mbinary(void)
+static int mms100_close_mbinary(void)
 {
 	int i;
 
@@ -1504,10 +1449,10 @@ static eISCRet_t mms100_close_mbinary(void)
 	return ISC_SUCCESS;
 }
 
-eISCRet_t mms100_ISC_download_mbinary(struct mms_ts_info *info)
+int mms100_ISC_download_mbinary(struct mms_ts_info *info)
 {
 	struct i2c_client *_client = info->client;
-	eISCRet_t ret_msg = ISC_NONE;
+	int ret_msg = ISC_NONE;
 
 	pr_info("[TSP ISC] %s\n", __func__);
 
@@ -1988,6 +1933,19 @@ err_mem_alloc:
 }
 #endif /* SEC_TSP_ISC_FW_UPDATE */
 
+static int get_panel_version(struct mms_ts_info *info)
+{
+	int ret;
+	int retries = 3;
+
+	/* this seems to fail sometimes after a reset.. retry a few times */
+	do {
+		ret = i2c_smbus_read_byte_data(info->client, MMS_COMPAT_GROUP);
+	} while (ret < 0 && retries-- > 0);
+
+	return ret;
+}
+
 static int get_fw_version(struct mms_ts_info *info)
 {
 	int ret;
@@ -2000,25 +1958,13 @@ static int get_fw_version(struct mms_ts_info *info)
 
 	return ret;
 }
-
-static int get_hw_version(struct mms_ts_info *info)
-{
-	int ret;
-	int retries = 3;
-
-	/* this seems to fail sometimes after a reset.. retry a few times */
-	do {
-		ret = i2c_smbus_read_byte_data(info->client, MMS_HW_REVISION);
-	} while (ret < 0 && retries-- > 0);
-
-	return ret;
-}
+/*
 static int mms_ts_enable(struct mms_ts_info *info, int wakeupcmd)
 {
 	mutex_lock(&info->lock);
 	if (info->enabled)
 		goto out;
-	/* wake up the touch controller. */
+
 	if (wakeupcmd == 1) {
 		i2c_smbus_write_byte_data(info->client, 0, 0);
 		usleep_range(3000, 5000);
@@ -2046,57 +1992,20 @@ out:
 	mutex_unlock(&info->lock);
 	return 0;
 }
+*/
 
-static int mms_ts_finish_config(struct mms_ts_info *info)
-{
-	struct i2c_client *client = info->client;
-	int ret;
-
-	#if defined(CONFIG_TARGET_LOCALE_KOR)
-	ret = request_threaded_irq(client->irq, NULL, mms_ts_interrupt,
-				   IRQF_TRIGGER_FALLING  | IRQF_ONESHOT,
-				   MELFAS_TS_NAME, info);
-	#else
-	ret = request_threaded_irq(client->irq, NULL, mms_ts_interrupt,
-				   IRQF_TRIGGER_LOW  | IRQF_ONESHOT,
-				   MELFAS_TS_NAME, info);
-	#endif
-
-
-	if (ret < 0) {
-		ret = 1;
-		dev_err(&client->dev, "Failed to register interrupt\n");
-		goto err_req_irq;
-	}
-
-	info->irq = client->irq;
-	barrier();
-
-	dev_info(&client->dev,
-		 "Melfas MMS-series touch controller initialized\n");
-
-	return 0;
-
-err_req_irq:
-	return ret;
-}
 static int mms_ts_fw_info(struct mms_ts_info *info)
 {
 	struct i2c_client *client = info->client;
-	struct i2c_adapter *adapter = to_i2c_adapter(client->dev.parent);
 	int ret = 0;
-	int ver, hw_rev;
+	int ver;
 
 	ver = get_fw_version(info);
 	info->fw_ic_ver = ver;
 		dev_info(&client->dev,
 			 "[TSP]fw version 0x%02x !!!!\n", ver);
 
-	hw_rev = get_hw_version(info);
-	dev_info(&client->dev,
-		"[TSP] hw rev = %x\n", hw_rev);
-
-	if (ver < 0 || hw_rev < 0) {
+	if (ver < 0) {
 		ret = 1;
 		dev_err(&client->dev,
 			"i2c fail...tsp driver unload.\n");
@@ -2110,8 +2019,6 @@ static int mms_ts_fw_info(struct mms_ts_info *info)
 		return ret;
 	}
 
-	ret = mms_ts_finish_config(info);
-
 	return ret;
 }
 
@@ -2119,9 +2026,8 @@ static int mms_ts_fw_load(struct mms_ts_info *info)
 {
 
 	struct i2c_client *client = info->client;
-	struct i2c_adapter *adapter = to_i2c_adapter(client->dev.parent);
 	int ret = 0;
-	int ver, hw_rev;
+	int ver;
 	int retries = 3;
 
 	ver = get_fw_version(info);
@@ -2129,12 +2035,7 @@ static int mms_ts_fw_load(struct mms_ts_info *info)
 	dev_info(&client->dev,
 		 "[TSP]fw version 0x%02x !!!!\n", ver);
 
-	hw_rev = get_hw_version(info);
-	dev_info(&client->dev,
-		"[TSP]hw rev = 0x%02x\n", hw_rev);
-
-	pr_err("[TSP] ISC Ver [0x%02x] [0x%02x] [0x%02x]",
-		i2c_smbus_read_byte_data(info->client, 0xF3),
+	pr_err("[TSP] ISC Ver [0x%02x] [0x%02x]",
 		i2c_smbus_read_byte_data(info->client, 0xF4),
 		i2c_smbus_read_byte_data(info->client, 0xF5));
 
@@ -2145,11 +2046,9 @@ static int mms_ts_fw_load(struct mms_ts_info *info)
 		goto out;
 	}
 
-		/* 4.8" OCTA LCD FW */
-	if (ver >= FW_VERSION_4_8 && ver != 0xFF\
-					&& ver != 0x00 && ver != 0x45) {
+	if (ver >= FW_VERSION) {
 			dev_info(&client->dev,
-				"4.8 fw version update does not need\n");
+				"fw version update does not need\n");
 		goto done;
 	}
 
@@ -2177,13 +2076,11 @@ out:
 done:
 
 #if ISC_DL_MODE	/* ISC_DL_MODE start */
-	pr_err("[TSP] ISC Ver [0x%02x] [0x%02x] [0x%02x]",
-		i2c_smbus_read_byte_data(info->client, 0xF3),
+	pr_err("[TSP] ISC Ver [0x%02x] [0x%02x]",
 		i2c_smbus_read_byte_data(info->client, 0xF4),
 		i2c_smbus_read_byte_data(info->client, 0xF5));
 #endif
 
-	ret = mms_ts_finish_config(info);
 	return ret;
 }
 
@@ -2288,8 +2185,7 @@ static void get_raw_data_all(struct mms_ts_info *info, u8 cmd)
 				dev_dbg(&info->client->dev, "[TSP] raw[%d][%d] = %d\n",
 					i, j, info->raw[j * RX_NUM + i]);
 			} else if (cmd == MMS_VSC_CMD_REFER) {
-				info->reference[j * RX_NUM + i] =
-						raw_data >> 3;
+				info->reference[j * RX_NUM + i] = raw_data;
 				dev_dbg(&info->client->dev, "[TSP] reference[%d][%d] = %d\n",
 					i, j, info->reference[j * RX_NUM + i]);
 			}
@@ -2302,56 +2198,11 @@ static void get_raw_data_all(struct mms_ts_info *info, u8 cmd)
 
 	enable_irq(info->irq);
 
-err_i2c:
-	dev_err(&info->client->dev, "%s: fail to i2c (cmd=%d)\n",
-		__func__, cmd);
-}
-
-static u32 get_raw_data_one(struct mms_ts_info *info, u16 rx_idx, u16 tx_idx,
-			    u8 cmd)
-{
-	u8 w_buf[6];
-	u8 read_buffer[2];
-	int ret;
-	u32 raw_data;
-
-	w_buf[0] = MMS_VSC_CMD;	/* vendor specific command id */
-	w_buf[1] = MMS_VSC_MODE;	/* mode of vendor */
-	w_buf[2] = 0;		/* tx line */
-	w_buf[3] = 0;		/* rx line */
-	w_buf[4] = 0;		/* reserved */
-	w_buf[5] = 0;		/* sub command */
-
-	if (cmd != MMS_VSC_CMD_INTENSITY && cmd != MMS_VSC_CMD_RAW &&
-	    cmd != MMS_VSC_CMD_REFER) {
-		dev_err(&info->client->dev, "%s: not profer command(cmd=%d)\n",
-			__func__, cmd);
-		return FAIL;
-	}
-
-	w_buf[2] = tx_idx;	/* tx */
-	w_buf[3] = rx_idx;	/* rx */
-	w_buf[5] = cmd;		/* sub command */
-
-	ret = i2c_smbus_write_i2c_block_data(info->client, w_buf[0], 5,
-					     &w_buf[1]);
-	if (ret < 0)
-		goto err_i2c;
-
-	ret = i2c_smbus_read_i2c_block_data(info->client, 0xBF, 2, read_buffer);
-	if (ret < 0)
-		goto err_i2c;
-
-	raw_data = ((u16) read_buffer[1] << 8) | read_buffer[0];
-	if (cmd == MMS_VSC_CMD_REFER)
-		raw_data = raw_data >> 4;
-
-	return raw_data;
+	return;
 
 err_i2c:
 	dev_err(&info->client->dev, "%s: fail to i2c (cmd=%d)\n",
 		__func__, cmd);
-	return FAIL;
 }
 
 static ssize_t show_close_tsp_test(struct device *dev,
@@ -2422,7 +2273,7 @@ static void fw_update(void *device_data)
 	struct i2c_client *client = info->client;
 	struct i2c_adapter *adapter = to_i2c_adapter(client->dev.parent);
 	int ret = 0;
-	int ver = 0, hw_rev = 0, fw_bin_ver = 0;
+	int ver = 0, fw_bin_ver = 0;
 	int retries = 5;
 	const u8 *buff = 0;
 	mm_segment_t old_fs = {0};
@@ -2432,17 +2283,14 @@ static void fw_update(void *device_data)
 	char fw_path[MAX_FW_PATH+1];
 	char result[16] = {0};
 
+	if (info->panel != 'M') {
+		dev_dbg(&client->dev, "support only Melfas panel\n");
+		dev_dbg(&client->dev, "fw update do not excute\n");
+		goto not_support;
+	}
 	set_default_result(info);
+	fw_bin_ver = FW_VERSION;
 
-	hw_rev = get_hw_version(info);
-	if (hw_rev == 0x1)
-		fw_bin_ver = FW_VERSION_4_8;
-	else if (hw_rev == 0x0C)
-		fw_bin_ver = FW_VERSION_4_65;
-#ifdef CONFIG_SLP
-	else if ((hw_rev == 0x07) || (hw_rev == 0x32))
-		fw_bin_ver = FW_VERSION_4_77;
-#endif
 	dev_info(&client->dev,
 		"fw_ic_ver = 0x%02x, fw_bin_ver = 0x%02x\n",
 		info->fw_ic_ver, fw_bin_ver);
@@ -2457,36 +2305,23 @@ static void fw_update(void *device_data)
 
 	switch (info->cmd_param[0]) {
 	case BUILT_IN:
-		if (hw_rev == 0x1) {
-			dev_info(&client->dev, "built in 4.8 fw is loaded!!\n");
+		dev_info(&client->dev, "built in 4.8 fw is loaded!!\n");
 
-			while (retries--) {
-				ret = mms100_ISC_download_mbinary(info);
-				ver = get_fw_version(info);
-				info->fw_ic_ver = ver;
-				if (ret == 0) {
-					pr_err("[TSP] mms100_ISC_download_mbinary success");
-					info->cmd_state = 2;
-					return;
-				} else {
-					pr_err("[TSP] mms100_ISC_download_mbinary fail[%d]",
-								ret);
-					info->cmd_state = 3;
-				}
+		while (retries--) {
+			ret = mms100_ISC_download_mbinary(info);
+			ver = get_fw_version(info);
+			info->fw_ic_ver = ver;
+			if (ret == 0) {
+				pr_err("[TSP] mms100_ISC_download_mbinary success");
+				info->cmd_state = 2;
+				return;
+			} else {
+				pr_err("[TSP] mms100_ISC_download_mbinary fail[%d]",
+							ret);
+				info->cmd_state = 3;
 			}
-			return;
-		} else if (hw_rev == 0x0C) {
-			buff = MELFAS_binary_4_65;
-			fsize = MELFAS_binary_nLength_4_65;
-			dev_info(&client->dev, "built in 4.65 fw is loaded!!\n");
 		}
-#ifdef CONFIG_SLP
-		else if ((hw_rev == 0x07) || (hw_rev == 0x32)) {
-			buff = MELFAS_binary_4_77;
-			fsize = MELFAS_binary_nLength_4_77;
-			dev_info(&client->dev, "built in 4.77 fw is loaded!!\n");
-		}
-#endif
+		return;
 		break;
 
 	case UMS:
@@ -2617,14 +2452,9 @@ static void get_fw_ver_bin(void *device_data)
 	struct mms_ts_info *info = (struct mms_ts_info *)device_data;
 
 	char buff[16] = {0};
-	int hw_rev;
 
 	set_default_result(info);
-	hw_rev = get_hw_version(info);
-	if (hw_rev == 0x01)
-		snprintf(buff, sizeof(buff), "%#02x", FW_VERSION_4_8);
-	else
-		snprintf(buff, sizeof(buff), "%#02x", FW_VERSION_4_65);
+	snprintf(buff, sizeof(buff), "%#02x", FW_VERSION);
 
 	set_cmd_result(info, buff, strnlen(buff, sizeof(buff)));
 	info->cmd_state = 2;
@@ -2752,7 +2582,7 @@ static void module_on_master(void *device_data)
 	dev_info(&info->client->dev, "%s: %s\n", __func__, buff);
 
 }
-
+/*
 static void module_off_slave(void *device_data)
 {
 	struct mms_ts_info *info = (struct mms_ts_info *)device_data;
@@ -2766,7 +2596,7 @@ static void module_on_slave(void *device_data)
 
 	not_support_cmd(info);
 }
-
+*/
 static void get_chip_vendor(void *device_data)
 {
 	struct mms_ts_info *info = (struct mms_ts_info *)device_data;
@@ -3130,6 +2960,53 @@ static ssize_t show_cmd_result(struct device *dev, struct device_attribute
 
 static bool intensity_log_flag;
 
+static u32 get_raw_data_one(struct mms_ts_info *info, u16 rx_idx, u16 tx_idx,
+			    u8 cmd)
+{
+	u8 w_buf[6];
+	u8 read_buffer[2];
+	int ret;
+	u32 raw_data;
+
+	w_buf[0] = MMS_VSC_CMD;	/* vendor specific command id */
+	w_buf[1] = MMS_VSC_MODE;	/* mode of vendor */
+	w_buf[2] = 0;		/* tx line */
+	w_buf[3] = 0;		/* rx line */
+	w_buf[4] = 0;		/* reserved */
+	w_buf[5] = 0;		/* sub command */
+
+	if (cmd != MMS_VSC_CMD_INTENSITY && cmd != MMS_VSC_CMD_RAW &&
+	    cmd != MMS_VSC_CMD_REFER) {
+		dev_err(&info->client->dev, "%s: not profer command(cmd=%d)\n",
+			__func__, cmd);
+		return FAIL;
+	}
+
+	w_buf[2] = tx_idx;	/* tx */
+	w_buf[3] = rx_idx;	/* rx */
+	w_buf[5] = cmd;		/* sub command */
+
+	ret = i2c_smbus_write_i2c_block_data(info->client, w_buf[0], 5,
+					     &w_buf[1]);
+	if (ret < 0)
+		goto err_i2c;
+
+	ret = i2c_smbus_read_i2c_block_data(info->client, 0xBF, 2, read_buffer);
+	if (ret < 0)
+		goto err_i2c;
+
+	raw_data = ((u16) read_buffer[1] << 8) | read_buffer[0];
+	if (cmd == MMS_VSC_CMD_REFER)
+		raw_data = raw_data >> 4;
+
+	return raw_data;
+
+err_i2c:
+	dev_err(&info->client->dev, "%s: fail to i2c (cmd=%d)\n",
+		__func__, cmd);
+	return FAIL;
+}
+
 static ssize_t show_intensity_logging_on(struct device *dev,
 		struct device_attribute *devattr, char *buf)
 {
@@ -3177,7 +3054,7 @@ static ssize_t show_intensity_logging_on(struct device *dev,
 			nwrite = vfs_write(fp, (const char __user *)log_data,
 					   strnlen(log_data, 160), &fp->f_pos);
 		}
-		usleep_range(5000);
+		usleep_range(3000, 5000);
 	} while (intensity_log_flag);
 
 	filp_close(fp, current->files);
@@ -3195,7 +3072,7 @@ static ssize_t show_intensity_logging_off(struct device *dev,
 {
 	struct mms_ts_info *info = dev_get_drvdata(dev);
 	intensity_log_flag = 0;
-	usleep_range(10000);
+	usleep_range(10000, 12000);
 	get_raw_data_all(info, MMS_VSC_CMD_EXIT);
 	return 0;
 }
@@ -3245,23 +3122,6 @@ static int __devinit mms_ts_probe(struct i2c_client *client,
 #endif
 	touch_is_pressed = 0;
 
-#if defined(CONFIG_TARGET_LOCALE_KOR)
-	noise_mode_indicator = 0;
-#endif
-
-#if defined(CONFIG_MACH_M0) || defined(CONFIG_MACH_C1)
-	gpio_request(GPIO_OLED_DET, "OLED_DET");
-	ret = gpio_get_value(GPIO_OLED_DET);
-	printk(KERN_DEBUG
-	"[TSP] OLED_DET = %d\n", ret);
-
-	if (ret == 0) {
-		printk(KERN_DEBUG
-		"[TSP] device wasn't connected to board\n");
-		return -EIO;
-	}
-#endif
-
 	if (!i2c_check_functionality(adapter, I2C_FUNC_I2C))
 		return -EIO;
 
@@ -3284,7 +3144,7 @@ static int __devinit mms_ts_probe(struct i2c_client *client,
 	info->pdata = client->dev.platform_data;
 	if (NULL == info->pdata) {
 		pr_err("failed to get platform data\n");
-		goto err_reg_input_dev;
+		goto err_config;
 	}
 	info->irq = -1;
 	mutex_init(&info->lock);
@@ -3303,6 +3163,45 @@ static int __devinit mms_ts_probe(struct i2c_client *client,
 		info->max_y = 1280;
 	}
 
+	i2c_set_clientdata(client, info);
+
+	info->callbacks.inform_charger = melfas_ta_cb;
+	if (info->register_cb)
+		info->register_cb(&info->callbacks);
+
+	info->pdata->power(true);
+	msleep(100);
+
+	ret = i2c_master_recv(client, buf, 1);
+	if (ret < 0) {		/* tsp connect check */
+		pr_err("%s: i2c fail...tsp driver unload [%d], Add[%d]\n",
+			   __func__, ret, info->client->addr);
+		goto err_config;
+	}
+
+	info->panel = get_panel_version(info);
+	dev_info(&client->dev, "%c panel\n", info->panel);
+
+#if defined(CONFIG_MACH_T0_EUR_OPEN) || defined(CONFIG_MACH_T0_EUR_LTE)
+	if (system_rev == 4) {
+		ret = mms_ts_fw_load(info);
+	} else {
+		if (info->panel == 'M')
+			ret = mms_ts_fw_load(info);
+		else
+			ret = mms_ts_fw_info(info);
+	}
+#else
+	if (info->panel == 'M')
+		ret = mms_ts_fw_load(info);
+	else
+		ret = mms_ts_fw_info(info);
+#endif
+	if (ret) {
+		dev_err(&client->dev, "failed to initialize (%d)\n", ret);
+		goto err_config;
+	}
+
 	snprintf(info->phys, sizeof(info->phys),
 		 "%s/input0", dev_name(&client->dev));
 	input_dev->name = "sec_touchscreen"; /*= "Melfas MMSxxx Touchscreen";*/
@@ -3311,30 +3210,28 @@ static int __devinit mms_ts_probe(struct i2c_client *client,
 	input_dev->dev.parent = &client->dev;
 
 	__set_bit(EV_ABS, input_dev->evbit);
-#ifdef CONFIG_SLP
-	__set_bit(EV_KEY, input_dev->evbit);
-	__set_bit(BTN_TOUCH, input_dev->keybit);
-#endif
 	__set_bit(INPUT_PROP_DIRECT, input_dev->propbit);
 
 	input_mt_init_slots(input_dev, MAX_FINGERS);
-	input_set_abs_params(input_dev, ABS_MT_WIDTH_MAJOR, 0, MAX_WIDTH, 0, 0);
-	input_set_abs_params(input_dev, ABS_MT_POSITION_X,
-			     0, (info->max_x)-1, 0, 0);
-	input_set_abs_params(input_dev, ABS_MT_POSITION_Y,
-				0, (info->max_y)-1, 0, 0);
-#ifdef CONFIG_SLP
-	input_set_abs_params(input_dev, ABS_X, 0, info->max_x, 0, 0);
-	input_set_abs_params(input_dev, ABS_Y, 0, info->max_y, 0, 0);
-#endif
 	input_set_abs_params(input_dev, ABS_MT_TOUCH_MAJOR,
 				0, MAX_PRESSURE, 0, 0);
 	input_set_abs_params(input_dev, ABS_MT_TOUCH_MINOR,
 				0, MAX_PRESSURE, 0, 0);
+	input_set_abs_params(input_dev, ABS_MT_POSITION_X,
+				0, (info->max_x)-1, 0, 0);
+	input_set_abs_params(input_dev, ABS_MT_POSITION_Y,
+				0, (info->max_y)-1, 0, 0);
+#ifdef NEW_FIRMWARE
+	input_set_abs_params(input_dev, ABS_MT_WIDTH_MAJOR,
+				0, MAX_WIDTH, 0, 0);
 	input_set_abs_params(input_dev, ABS_MT_ANGLE,
-			     MIN_ANGLE, MAX_ANGLE, 0, 0);
+				MIN_ANGLE, MAX_ANGLE, 0, 0);
 	input_set_abs_params(input_dev, ABS_MT_PALM,
 				0, 1, 0, 0);
+#else
+	input_set_abs_params(input_dev, ABS_MT_PRESSURE,
+				0, MAX_WIDTH, 0, 0);
+#endif
 	input_set_drvdata(input_dev, info);
 
 	ret = input_register_device(input_dev);
@@ -3353,38 +3250,19 @@ static int __devinit mms_ts_probe(struct i2c_client *client,
 	info->dvfs_lock_status = false;
 #endif
 
-	i2c_set_clientdata(client, info);
-	info->pdata->power(true);
-	msleep(100);
-
-	ret = i2c_master_recv(client, buf, 1);
-	if (ret < 0) {		/* tsp connect check */
-		pr_err("%s: i2c fail...tsp driver unload [%d], Add[%d]\n",
-			   __func__, ret, info->client->addr);
-		goto err_config;
-	}
-
-	if (system_rev >= TSP_FW_UPDATEABLE_HW_REV)
-		ret = mms_ts_fw_load(info);
-	else
-		ret = mms_ts_fw_info(info);
-
-	if (ret) {
-		dev_err(&client->dev, "failed to initialize (%d)\n", ret);
-		goto err_config;
-	}
-
 	info->enabled = true;
-	info->callbacks.inform_charger = melfas_ta_cb;
-	if (info->register_cb)
-		info->register_cb(&info->callbacks);
+
+	ret = request_threaded_irq(client->irq, NULL, mms_ts_interrupt,
+				   IRQF_TRIGGER_LOW  | IRQF_ONESHOT,
+				   MELFAS_TS_NAME, info);
+	if (ret < 0) {
+		dev_err(&client->dev, "Failed to register interrupt\n");
+		goto err_req_irq;
+	}
+	info->irq = client->irq;
 
 #ifdef CONFIG_HAS_EARLYSUSPEND
-#if defined(CONFIG_TARGET_LOCALE_KOR)
-		info->early_suspend.level = EARLY_SUSPEND_LEVEL_DISABLE_FB+1;
-#else
 	info->early_suspend.level = EARLY_SUSPEND_LEVEL_BLANK_SCREEN + 1;
-#endif
 	info->early_suspend.suspend = mms_ts_early_suspend;
 	info->early_suspend.resume = mms_ts_late_resume;
 	register_early_suspend(&info->early_suspend);
@@ -3424,11 +3302,12 @@ static int __devinit mms_ts_probe(struct i2c_client *client,
 #endif
 	return 0;
 
-err_config:
-	input_unregister_device(input_dev);
-	input_dev = NULL;
+err_req_irq:
 err_reg_input_dev:
+	input_unregister_device(input_dev);
 	input_free_device(input_dev);
+err_config:
+	/*input_dev = NULL;*/
 err_input_alloc:
 	kfree(info->fw_name);
 	kfree(info);
@@ -3476,9 +3355,6 @@ static int mms_ts_suspend(struct device *dev)
 	disable_irq(info->irq);
 	info->enabled = false;
 	touch_is_pressed = 0;
-#if defined(CONFIG_TARGET_LOCALE_KOR)
-	noise_mode_indicator = 0;
-#endif
 	release_all_fingers(info);
 	info->pdata->power(0);
 	/* This delay needs to prevent unstable POR by
@@ -3491,7 +3367,6 @@ static int mms_ts_resume(struct device *dev)
 {
 	struct i2c_client *client = to_i2c_client(dev);
 	struct mms_ts_info *info = i2c_get_clientdata(client);
-	int ret = 0;
 
 	if (info->enabled)
 		return 0;
@@ -3518,13 +3393,9 @@ static int mms_ts_resume(struct device *dev)
 	/* Because irq_type by EXT_INTxCON register is changed to low_level
 	 *  after wakeup, irq_type set to falling edge interrupt again.
 	 */
-	#if defined(CONFIG_TARGET_LOCALE_KOR)
-	irq_set_irq_type(client->irq, IRQ_TYPE_EDGE_FALLING);
-	msleep(20);
-	#endif
-
 	enable_irq(info->irq);
 	info->enabled = true;
+
 	return 0;
 }
 #endif
