@@ -203,8 +203,8 @@ static int cpufreq_governor_dbs(struct cpufreq_policy *policy,
 #ifndef CONFIG_CPU_FREQ_DEFAULT_GOV_PEGASUSQ
 static
 #endif
-struct cpufreq_governor cpufreq_gov_pegasusq = {
-	.name                   = "pegasusq",
+struct cpufreq_governor cpufreq_gov_slp = {
+	.name                   = "slp",
 	.governor               = cpufreq_governor_dbs,
 	.owner                  = THIS_MODULE,
 };
@@ -233,7 +233,7 @@ struct cpu_dbs_info_s {
 };
 static DEFINE_PER_CPU(struct cpu_dbs_info_s, od_cpu_dbs_info);
 
-struct workqueue_struct *dvfs_workqueue;
+static struct workqueue_struct *dvfs_workqueue;
 
 static unsigned int dbs_enable;	/* number of CPUs using this policy */
 
@@ -317,7 +317,7 @@ static void apply_hotplug_lock(void)
 	queue_work_on(dbs_info->cpu, dvfs_workqueue, work);
 }
 
-int cpufreq_pegasusq_cpu_lock(int num_core)
+static int cpufreq_pegasusq_cpu_lock(int num_core)
 {
 	int prev_lock;
 
@@ -338,7 +338,7 @@ int cpufreq_pegasusq_cpu_lock(int num_core)
 	return 0;
 }
 
-int cpufreq_pegasusq_cpu_unlock(int num_core)
+static int cpufreq_pegasusq_cpu_unlock(int num_core)
 {
 	int prev_lock = atomic_read(&g_hotplug_lock);
 
@@ -353,38 +353,6 @@ int cpufreq_pegasusq_cpu_unlock(int num_core)
 	return 0;
 }
 
-void cpufreq_pegasusq_min_cpu_lock(unsigned int num_core)
-{
-	int online, flag;
-	struct cpu_dbs_info_s *dbs_info;
-
-	dbs_tuners_ins.min_cpu_lock = min(num_core, num_possible_cpus());
-
-	dbs_info = &per_cpu(od_cpu_dbs_info, 0); /* from CPU0 */
-	online = num_online_cpus();
-	flag = (int)num_core - online;
-	if (flag <= 0)
-		return;
-	queue_work_on(dbs_info->cpu, dvfs_workqueue, &dbs_info->up_work);
-}
-
-void cpufreq_pegasusq_min_cpu_unlock(void)
-{
-	int online, lock, flag;
-	struct cpu_dbs_info_s *dbs_info;
-
-	dbs_tuners_ins.min_cpu_lock = 0;
-
-	dbs_info = &per_cpu(od_cpu_dbs_info, 0); /* from CPU0 */
-	online = num_online_cpus();
-	lock = atomic_read(&g_hotplug_lock);
-	if (lock == 0)
-		return;
-	flag = lock - online;
-	if (flag >= 0)
-		return;
-	queue_work_on(dbs_info->cpu, dvfs_workqueue, &dbs_info->down_work);
-}
 
 /*
  * History of CPU usage
@@ -400,7 +368,7 @@ struct cpu_usage_history {
 	unsigned int num_hist;
 };
 
-struct cpu_usage_history *hotplug_history;
+static struct cpu_usage_history *hotplug_history;
 
 static inline cputime64_t get_cpu_idle_time_jiffy(unsigned int cpu,
 						  cputime64_t *wall)
@@ -745,10 +713,7 @@ static ssize_t store_min_cpu_lock(struct kobject *a, struct attribute *b,
 	ret = sscanf(buf, "%u", &input);
 	if (ret != 1)
 		return -EINVAL;
-	if (input == 0)
-		cpufreq_pegasusq_min_cpu_unlock();
-	else
-		cpufreq_pegasusq_min_cpu_lock(input);
+	dbs_tuners_ins.min_cpu_lock = min(input, num_possible_cpus());
 	return count;
 }
 
@@ -797,6 +762,134 @@ static ssize_t store_dvfs_debug(struct kobject *a, struct attribute *b,
 	return count;
 }
 
+/******************************************************************************/
+
+#ifdef CONFIG_SLP_CHECK_CPU_LOAD
+#define CPU_LOAD_HISTORY_NUM 1024
+
+struct cpu_load_freq_history_tag {
+	char time[16];
+	unsigned int cpufreq;
+	unsigned int cpu_load[NR_CPUS];
+	unsigned int touch_event;
+	unsigned int nr_onlinecpu;
+};
+static struct cpu_load_freq_history_tag
+	cpu_load_freq_history[CPU_LOAD_HISTORY_NUM];
+static struct cpu_load_freq_history_tag
+	cpu_load_freq_history_view[CPU_LOAD_HISTORY_NUM];
+static unsigned int  cpu_load_freq_history_cnt;
+
+static  int  cpu_load_freq_history_show_cnt = 100;
+
+void cpu_load_touch_event(unsigned int event)
+{
+	unsigned int cnt = 0;
+
+	cnt = cpu_load_freq_history_cnt;
+	if (event == 0)
+		cpu_load_freq_history[cnt].touch_event = 100;
+	else if (event == 1)
+		cpu_load_freq_history[cnt].touch_event = 1;
+
+}
+
+static void store_cpu_load(unsigned int cpufreq, unsigned int cpu_load[])
+{
+	unsigned int j = 0, cnt = 0;
+	unsigned long long t;
+	unsigned long  nanosec_rem;
+
+	if (++cpu_load_freq_history_cnt >= CPU_LOAD_HISTORY_NUM)
+		cpu_load_freq_history_cnt = 0;
+
+	cnt = cpu_load_freq_history_cnt;
+	cpu_load_freq_history[cnt].cpufreq = cpufreq;
+
+	t = cpu_clock(UINT_MAX);
+	nanosec_rem = do_div(t, 1000000000);
+	sprintf(cpu_load_freq_history[cnt].time, "%2lu.%02lu"
+				, (unsigned long) t, nanosec_rem / 10000000);
+
+	for (j = 0; j < NR_CPUS; j++)
+		cpu_load_freq_history[cnt].cpu_load[j] = cpu_load[j];
+
+	cpu_load_freq_history[cnt].touch_event = 0;
+	cpu_load_freq_history[cnt].nr_onlinecpu = num_online_cpus();
+}
+
+
+static int atoi(const char *str)
+{
+	int result = 0;
+	int count = 0;
+	if (str == NULL)
+		return -1;
+	while (str[count] && str[count] >= '0' && str[count] <= '9') {
+		result = result * 10 + str[count] - '0';
+		++count;
+	}
+	return result;
+}
+
+static ssize_t store_cpu_load_freq(struct kobject *a, struct attribute *b,
+				  const char *buf, size_t count)
+{
+	int show_num = 0;
+
+	show_num = atoi(buf);
+	cpu_load_freq_history_show_cnt = show_num;
+
+	return count;
+}
+
+static ssize_t show_cpu_load_freq(struct kobject *kobj,
+					struct attribute *attr, char *buf)
+{
+	int ret = 0;
+	 int j = 0, cnt = 0, delta = 0;
+	cnt = cpu_load_freq_history_cnt;
+
+	memcpy(cpu_load_freq_history_view, cpu_load_freq_history
+					, sizeof(cpu_load_freq_history_view));
+
+	if ((cnt - cpu_load_freq_history_show_cnt) < 0) {
+		delta = cnt - cpu_load_freq_history_show_cnt;
+		cnt = CPU_LOAD_HISTORY_NUM + delta;
+	} else
+		cnt -= cpu_load_freq_history_show_cnt;
+
+	if ((cnt+1 >= CPU_LOAD_HISTORY_NUM)
+			|| (cpu_load_freq_history_view[cnt+1].time == 0))
+		cnt = 0;
+	else
+		cnt++;
+
+	for (j = 0; j < cpu_load_freq_history_show_cnt; j++) {
+
+		if (cnt > CPU_LOAD_HISTORY_NUM-1)
+			cnt = 0;
+
+		 pr_emerg("[%4d] \t%s \t%7d \t%3d \t%3d \t%3d \t%3d \t%3d\n"
+				, cnt
+				, cpu_load_freq_history_view[cnt].time
+				, cpu_load_freq_history_view[cnt].cpufreq
+				, cpu_load_freq_history_view[cnt].cpu_load[0]
+				, cpu_load_freq_history_view[cnt].cpu_load[1]
+				, cpu_load_freq_history_view[cnt].cpu_load[2]
+				, cpu_load_freq_history_view[cnt].cpu_load[3]
+				, cpu_load_freq_history[cnt].nr_onlinecpu);
+
+		++cnt;
+	}
+
+	return ret;
+}
+#endif
+
+/******************************************************************************/
+
+
 define_one_global_rw(sampling_rate);
 define_one_global_rw(io_is_busy);
 define_one_global_rw(up_threshold);
@@ -813,6 +906,9 @@ define_one_global_rw(max_cpu_lock);
 define_one_global_rw(min_cpu_lock);
 define_one_global_rw(hotplug_lock);
 define_one_global_rw(dvfs_debug);
+#ifdef CONFIG_SLP_CHECK_CPU_LOAD
+define_one_global_rw(cpu_load_freq);
+#endif
 
 static struct attribute *dbs_attributes[] = {
 	&sampling_rate_min.attr,
@@ -834,6 +930,9 @@ static struct attribute *dbs_attributes[] = {
 	&min_cpu_lock.attr,
 	&hotplug_lock.attr,
 	&dvfs_debug.attr,
+#ifdef CONFIG_SLP_CHECK_CPU_LOAD
+	&cpu_load_freq.attr,
+#endif
 	&hotplug_freq_1_1.attr,
 	&hotplug_freq_2_0.attr,
 	&hotplug_freq_2_1.attr,
@@ -851,7 +950,7 @@ static struct attribute *dbs_attributes[] = {
 
 static struct attribute_group dbs_attr_group = {
 	.attrs = dbs_attributes,
-	.name = "pegasusq",
+	.name = "slp",
 };
 
 /************************** sysfs end ************************/
@@ -861,15 +960,9 @@ static void cpu_up_work(struct work_struct *work)
 	int cpu;
 	int online = num_online_cpus();
 	int nr_up = dbs_tuners_ins.up_nr_cpus;
-	int min_cpu_lock = dbs_tuners_ins.min_cpu_lock;
 	int hotplug_lock = atomic_read(&g_hotplug_lock);
-
-	if (hotplug_lock && min_cpu_lock)
-		nr_up = max(hotplug_lock, min_cpu_lock) - online;
-	else if (hotplug_lock)
+	if (hotplug_lock)
 		nr_up = hotplug_lock - online;
-	else if (min_cpu_lock)
-		nr_up = max(nr_up, min_cpu_lock - online);
 
 	if (online == 1) {
 		printk(KERN_ERR "CPU_UP 3\n");
@@ -1057,6 +1150,9 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 				   dbs_tuners_ins.cpu_down_rate);
 	int up_threshold = dbs_tuners_ins.up_threshold;
 
+#ifdef CONFIG_SLP_CHECK_CPU_LOAD
+	unsigned int cpu_load[NR_CPUS];
+#endif
 	policy = this_dbs_info->cur_policy;
 
 	hotplug_history->usage[num_hist].freq = policy->cur;
@@ -1065,6 +1161,11 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 
 	/* Get Absolute Load - in terms of freq */
 	max_load_freq = 0;
+
+#ifdef CONFIG_SLP_CHECK_CPU_LOAD
+	for (j = 0; j < NR_CPUS; j++)
+		cpu_load[j] = 0;
+#endif
 
 	for_each_cpu(j, policy->cpus) {
 		struct cpu_dbs_info_s *j_dbs_info;
@@ -1118,6 +1219,10 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 			continue;
 
 		load = 100 * (wall_time - idle_time) / wall_time;
+
+#ifdef CONFIG_SLP_CHECK_CPU_LOAD
+		cpu_load[j] = load;
+#endif
 		hotplug_history->usage[num_hist].load[j] = load;
 
 		freq_avg = __cpufreq_driver_getavg(policy, j);
@@ -1128,6 +1233,10 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 		if (load_freq > max_load_freq)
 			max_load_freq = load_freq;
 	}
+
+#ifdef CONFIG_SLP_CHECK_CPU_LOAD
+	store_cpu_load(policy->cur, cpu_load);
+#endif
 
 	/* Check for CPU hotplug */
 	if (check_up()) {
@@ -1141,9 +1250,8 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 		hotplug_history->num_hist = 0;
 
 	/* Check for frequency increase */
-	if (policy->cur < FREQ_FOR_RESPONSIVENESS) {
+	if (policy->cur < FREQ_FOR_RESPONSIVENESS)
 		up_threshold = UP_THRESHOLD_AT_MIN_FREQ;
-	}
 
 	if (max_load_freq > up_threshold * policy->cur) {
 		int inc = (policy->max * dbs_tuners_ins.freq_step) / 100;
@@ -1207,6 +1315,7 @@ static void do_dbs_timer(struct work_struct *work)
 		container_of(work, struct cpu_dbs_info_s, work.work);
 	unsigned int cpu = dbs_info->cpu;
 	int delay;
+	int primary_delay;
 
 	mutex_lock(&dbs_info->timer_mutex);
 
@@ -1216,9 +1325,12 @@ static void do_dbs_timer(struct work_struct *work)
 	 */
 	delay = usecs_to_jiffies(dbs_tuners_ins.sampling_rate
 				 * dbs_info->rate_mult);
-
+	primary_delay = delay;
 	if (num_online_cpus() > 1)
 		delay -= jiffies % delay;
+
+	if (delay < primary_delay / 2)
+		delay = primary_delay / 2;
 
 	queue_delayed_work_on(cpu, dvfs_workqueue, &dbs_info->work, delay);
 	mutex_unlock(&dbs_info->timer_mutex);
@@ -1448,14 +1560,14 @@ static int __init cpufreq_gov_dbs_init(void)
 		goto err_hist;
 	}
 
-	dvfs_workqueue = create_workqueue("kpegasusq");
+	dvfs_workqueue = create_workqueue("kslp");
 	if (!dvfs_workqueue) {
 		pr_err("%s cannot create workqueue\n", __func__);
 		ret = -ENOMEM;
 		goto err_queue;
 	}
 
-	ret = cpufreq_register_governor(&cpufreq_gov_pegasusq);
+	ret = cpufreq_register_governor(&cpufreq_gov_slp);
 	if (ret)
 		goto err_reg;
 
@@ -1478,7 +1590,7 @@ err_hist:
 
 static void __exit cpufreq_gov_dbs_exit(void)
 {
-	cpufreq_unregister_governor(&cpufreq_gov_pegasusq);
+	cpufreq_unregister_governor(&cpufreq_gov_slp);
 	destroy_workqueue(dvfs_workqueue);
 	kfree(hotplug_history);
 	kfree(rq_data);
