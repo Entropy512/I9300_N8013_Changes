@@ -103,8 +103,17 @@
 /* MAX77693_CHG_REG_CHG_CNFG_04 */
 #define MAX77693_CHG_MINVSYS_MASK	0xE0
 #define MAX77693_CHG_MINVSYS_SHIFT	5
-#define MAX77693_CHG_PRM_MASK		0x1F
-#define MAX77693_CHG_PRM_SHIFT		0
+#define MAX77693_CHG_MINVSYS_3_6V	0x06
+#define MAX77693_CHG_CV_PRM_MASK		0x1F
+#define MAX77693_CHG_CV_PRM_SHIFT		0
+#define MAX77693_CHG_CV_PRM_4_20V		0x16
+#define MAX77693_CHG_CV_PRM_4_35V		0x1D
+#define MAX77693_CHG_CV_PRM_4_40V		0x1F
+
+/* MAX77693_CHG_REG_CHG_CNFG_06 */
+#define MAX77693_CHG_CHGPROT		0x0C
+#define MAX77693_CHG_CHGPROT_SHIFT	2
+#define MAX77693_CHG_CHGPROT_UNLOCK	0x03
 
 /* MAX77693_CHG_REG_CHG_CNFG_09 */
 #define MAX77693_CHG_CHGIN_LIM	0x7F
@@ -126,6 +135,13 @@
 /* irq */
 #define IRQ_DEBOUNCE_TIME	20	/* msec */
 
+/* charger unlock */
+#define CHG_UNLOCK_RETRY	10
+#define CHG_UNLOCK_DELAY	100
+
+/* power stabe guarantee */
+#define STABLE_POWER_DELAY	500
+
 /* charger type detection */
 #define DET_ERR_RETRY	5
 #define DET_ERR_DELAY	200
@@ -138,8 +154,8 @@
 
 /* soft regulation */
 #define SW_REG_CURR_STEP_MA	100
-#define SW_REG_START_DELAY	1000
-#define SW_REG_STEP_DELAY	500
+#define SW_REG_START_DELAY	500
+#define SW_REG_STEP_DELAY	100
 
 struct max77693_charger_data {
 	struct max77693_dev	*max77693;
@@ -174,6 +190,7 @@ struct max77693_charger_data {
 	/* software regulation */
 	bool		soft_reg_state;
 	int		soft_reg_current;
+	bool		soft_reg_ing;
 
 	/* unsufficient power */
 	bool		reg_loop_deted;
@@ -378,7 +395,7 @@ static void max77693_set_charger_state(struct max77693_charger_data *chg_data,
 {
 	struct i2c_client *i2c = chg_data->max77693->i2c;
 	u8 reg_data;
-	pr_debug("%s: enable=%d\n", __func__, enable);
+	pr_debug("%s: enable(%d)\n", __func__, enable);
 
 	max77693_read_reg(i2c, MAX77693_CHG_REG_CHG_CNFG_00, &reg_data);
 
@@ -460,7 +477,7 @@ void max77693_set_input_current(struct max77693_charger_data *chg_data,
 						chg_data->soft_reg_current);
 		in_curr = max77693_get_input_current(chg_data);
 		if (in_curr == chg_data->soft_reg_current) {
-			pr_info("%s: same input current: %dmA\n",
+			pr_debug("%s: same input current: %dmA\n",
 						__func__, in_curr);
 			return;
 		}
@@ -740,13 +757,13 @@ static int max77693_get_cable_type(struct max77693_charger_data *chg_data)
 			/* check D+/D- ovp */
 			dxovp = ((mu_st2 & MAX77693_DXOVP) >>
 						MAX77693_DXOVP_SHIFT);
-			if (dxovp) {
+			if ((vbvolt == 0x1) && (dxovp)) {
 				pr_err("%s: D+/D- ovp state\n", __func__);
 				chg_det_erred = true;
 				state = POWER_SUPPLY_TYPE_USB;
 				goto chg_det_finish;
 			} else {
-				pr_err("%s: async power and chgtyp\n", __func__);
+				pr_err("%s: async power & chgtyp\n", __func__);
 				goto chg_det_err;
 			}
 		}
@@ -895,7 +912,53 @@ void max77693_set_muic_cb_type(struct max77693_charger_data *chg_data, int data)
 
 	cancel_delayed_work(&chg_data->update_work);
 	wake_lock(&chg_data->update_wake_lock);
-	schedule_delayed_work(&chg_data->update_work, msecs_to_jiffies(500));
+	schedule_delayed_work(&chg_data->update_work,
+			msecs_to_jiffies(STABLE_POWER_DELAY));
+}
+
+static bool max77693_charger_unlock(struct max77693_charger_data *chg_data)
+{
+	struct i2c_client *i2c = chg_data->max77693->i2c;
+	u8 reg_data;
+	u8 chgprot;
+	int retry_cnt = 0;
+	bool need_init = false;
+	pr_debug("%s\n", __func__);
+
+	max77693_read_reg(i2c, MAX77693_CHG_REG_CHG_CNFG_06, &reg_data);
+	chgprot = ((reg_data & MAX77693_CHG_CHGPROT) >>
+				MAX77693_CHG_CHGPROT_SHIFT);
+
+	if (chgprot == MAX77693_CHG_CHGPROT_UNLOCK) {
+		pr_debug("%s: unlocked state, return\n", __func__);
+		need_init = false;
+		goto unlock_finish;
+	}
+
+	do {
+		max77693_write_reg(i2c, MAX77693_CHG_REG_CHG_CNFG_06,
+					(MAX77693_CHG_CHGPROT_UNLOCK <<
+					MAX77693_CHG_CHGPROT_SHIFT));
+
+		max77693_read_reg(i2c, MAX77693_CHG_REG_CHG_CNFG_06, &reg_data);
+		chgprot = ((reg_data & MAX77693_CHG_CHGPROT) >>
+					MAX77693_CHG_CHGPROT_SHIFT);
+
+		if (chgprot != MAX77693_CHG_CHGPROT_UNLOCK) {
+			pr_err("%s: unlock err, chgprot(0x%x), retry(%d)\n",
+					__func__, chgprot, retry_cnt);
+			msleep(CHG_UNLOCK_DELAY);
+		} else {
+			pr_info("%s: unlock success, chgprot(0x%x)\n",
+							__func__, chgprot);
+			need_init = true;
+			break;
+		}
+	} while ((chgprot != MAX77693_CHG_CHGPROT_UNLOCK) &&
+				(++retry_cnt < CHG_UNLOCK_RETRY));
+
+unlock_finish:
+	return need_init;
 }
 
 static void max77693_charger_reg_init(struct max77693_charger_data *chg_data)
@@ -903,10 +966,6 @@ static void max77693_charger_reg_init(struct max77693_charger_data *chg_data)
 	struct i2c_client *i2c = chg_data->max77693->i2c;
 	u8 reg_data;
 	pr_debug("%s\n", __func__);
-
-	/* unlock charger setting protect */
-	reg_data = (0x03 << 2);
-	max77693_write_reg(i2c, MAX77693_CHG_REG_CHG_CNFG_06, reg_data);
 
 	/*
 	 * fast charge timer 10hrs
@@ -929,8 +988,12 @@ static void max77693_charger_reg_init(struct max77693_charger_data *chg_data)
 	 */
 	if (chg_data->max77693->pmic_rev == MAX77693_REV_PASS1)
 		reg_data = (0x03 << 0);	/* 125mA */
-	else
+	else {
 		reg_data = (0x00 << 0);	/* 100mA */
+#if defined(CONFIG_MACH_GC1)
+		reg_data = (0x02 << 0);	/* 150mA */
+#endif
+	}
 
 	reg_data |= (0x00 << 3);
 	max77693_write_reg(i2c, MAX77693_CHG_REG_CHG_CNFG_03, reg_data);
@@ -939,30 +1002,35 @@ static void max77693_charger_reg_init(struct max77693_charger_data *chg_data)
 	 * cv voltage 4.2V or 4.35V
 	 * MINVSYS 3.6V(default)
 	 */
+	reg_data &= (~MAX77693_CHG_MINVSYS_MASK);
+	reg_data |= (MAX77693_CHG_MINVSYS_3_6V << MAX77693_CHG_MINVSYS_SHIFT);
+	reg_data &= (~MAX77693_CHG_CV_PRM_MASK);
+#if defined(CONFIG_MACH_M0)
 	if ((system_rev != 3) && (system_rev >= 1))
-		reg_data = (0xDD << 0);
+		reg_data |= (MAX77693_CHG_CV_PRM_4_35V << 0);
 	else
-		reg_data = (0xD6 << 0);
+		reg_data |= (MAX77693_CHG_CV_PRM_4_20V << 0);
+#else	/* C1, C2, M3, T0, ... */
+		reg_data |= (MAX77693_CHG_CV_PRM_4_35V << 0);
+#endif
 
 	/*
 	 * For GC1 Model,  MINVSYS is 3.4V.
-	 *  For GC1 Model  PRMV( Primary Charge Regn. Voltage) = 4.25V.
+	 *  For GC1 Model  PRMV( Primary Charge Regn. Voltage) = 4.2V.
 	 * Actual expected regulated voltage needs to be 4.2V but due to
-	 * internal resistance and circuit deviation we need to set the
-	 * benchmark a bit higher(4.25V).
+	 * internal resistance and circuit deviation we might have to set the
+	 * benchmark a bit higher sometimes. (4.225V now)
 	 */
 #if defined(CONFIG_MACH_GC1)
-	reg_data &= (~MAX77693_CHG_PRM_MASK);
-	reg_data |= (0x18 << MAX77693_CHG_PRM_SHIFT);
+	reg_data &= (~MAX77693_CHG_CV_PRM_MASK);
+	reg_data |= (0x17 << MAX77693_CHG_CV_PRM_SHIFT);
 	reg_data &= (~MAX77693_CHG_MINVSYS_MASK);
 	reg_data |= (0x4 << MAX77693_CHG_MINVSYS_SHIFT);
 #endif
-
 	pr_info("%s: battery cv voltage %s, (sysrev %d)\n", __func__,
-		(((reg_data & MAX77693_CHG_PRM_MASK) == \
-		(0x1D << MAX77693_CHG_PRM_SHIFT)) ? "4.35V" : "4.2V"),
-		system_rev);
-
+		(((reg_data & MAX77693_CHG_CV_PRM_MASK) == \
+		(MAX77693_CHG_CV_PRM_4_35V << MAX77693_CHG_CV_PRM_SHIFT)) ?
+					"4.35V" : "4.2V"), system_rev);
 	max77693_write_reg(i2c, MAX77693_CHG_REG_CHG_CNFG_04, reg_data);
 
 	/* VBYPSET 5V */
@@ -1034,54 +1102,100 @@ static void max77693_update_work(struct work_struct *work)
 	wake_unlock(&chg_data->update_wake_lock);
 }
 
+static void max77693_reduce_input(struct max77693_charger_data *chg_data,
+							unsigned int curr)
+{
+	struct i2c_client *i2c = chg_data->max77693->i2c;
+	u8 reg_data;
+	pr_debug("%s: reduce %dmA\n", __func__, curr);
+
+	max77693_read_reg(i2c, MAX77693_CHG_REG_CHG_CNFG_09, &reg_data);
+	reg_data &= MAX77693_CHG_CHGIN_LIM;
+	chg_data->soft_reg_current = reg_data * 20;
+	chg_data->soft_reg_current -= curr;
+	chg_data->soft_reg_current = max(chg_data->soft_reg_current, 0);
+	pr_info("%s: %dmA to %dmA\n", __func__,
+			reg_data * 20, chg_data->soft_reg_current);
+
+	reg_data = (chg_data->soft_reg_current / 20);
+	pr_debug("%s: reg_data(0x%02x)\n", __func__, reg_data);
+	max77693_write_reg(i2c, MAX77693_CHG_REG_CHG_CNFG_09, reg_data);
+}
+
 static void max77693_softreg_work(struct work_struct *work)
 {
 	struct max77693_charger_data *chg_data = container_of(work,
 						struct max77693_charger_data,
 						softreg_work.work);
-	struct i2c_client *i2c = chg_data->max77693->i2c;
-	u8 reg_data;
-	u8 int_ok, dtls_02, byp_dtls;
-	pr_info("%s\n", __func__);
+	u8 int_ok;
+	u8 dtls_00, chgin_dtls;
+	u8 dtls_01, chg_dtls;
+	u8 dtls_02, byp_dtls;
+	u8 mu_st2, vbvolt;
+	pr_debug("%s\n", __func__);
 
 	mutex_lock(&chg_data->ops_lock);
 
+	/* charger */
 	max77693_read_reg(chg_data->max77693->i2c,
-				MAX77693_CHG_REG_CHG_INT_OK,
-				&int_ok);
-
+				MAX77693_CHG_REG_CHG_INT_OK, &int_ok);
 	max77693_read_reg(chg_data->max77693->i2c,
-				MAX77693_CHG_REG_CHG_DTLS_02,
-				&dtls_02);
+				MAX77693_CHG_REG_CHG_DTLS_00, &dtls_00);
+	max77693_read_reg(chg_data->max77693->i2c,
+				MAX77693_CHG_REG_CHG_DTLS_01, &dtls_01);
+	max77693_read_reg(chg_data->max77693->i2c,
+				MAX77693_CHG_REG_CHG_DTLS_02, &dtls_02);
 
+	chgin_dtls = ((dtls_00 & MAX77693_CHGIN_DTLS) >>
+				MAX77693_CHGIN_DTLS_SHIFT);
+	chg_dtls = ((dtls_01 & MAX77693_CHG_DTLS) >>
+				MAX77693_CHG_DTLS_SHIFT);
 	byp_dtls = ((dtls_02 & MAX77693_BYP_DTLS) >>
 				MAX77693_BYP_DTLS_SHIFT);
-	pr_info("%s: INT_OK(0x%02x), BYP_DTLS(0x%02x)\n",
-				__func__, int_ok, byp_dtls);
 
-	if (byp_dtls & MAX77693_BYP_DTLS3) {
-		pr_info("%s: unstable power state for %dms\n", __func__,
-							SW_REG_START_DELAY);
+	/* muic */
+	max77693_read_reg(chg_data->max77693->muic,
+				MAX77693_MUIC_REG_STATUS2, &mu_st2);
+	vbvolt = ((mu_st2 & MAX77693_VBVOLT) >>
+				MAX77693_VBVOLT_SHIFT);
+
+	pr_info("%s: INT_OK(0x%x), CHGIN(0x%x), CHG(0x%x), "
+				"BYP(0x%x), ST2(0x%x)\n", __func__,
+				int_ok, chgin_dtls, chg_dtls,
+				byp_dtls, mu_st2);
+
+	if ((byp_dtls & MAX77693_BYP_DTLS3) ||
+		((chgin_dtls == 0x0) && (vbvolt == 0x1))) {
+		pr_info("%s: unstable power\n", __func__);
+
+		/* set soft regulation progress */
+		chg_data->soft_reg_ing = true;
+
 		/* enable soft regulation loop */
 		chg_data->soft_reg_state = true;
 
-		max77693_read_reg(i2c, MAX77693_CHG_REG_CHG_CNFG_09, &reg_data);
-		reg_data &= MAX77693_CHG_CHGIN_LIM;
-		chg_data->soft_reg_current = reg_data * 20;
-		chg_data->soft_reg_current -= SW_REG_CURR_STEP_MA;
-		chg_data->soft_reg_current = max(chg_data->soft_reg_current, 0);
-		pr_info("%s: %dmA to %dmA\n", __func__,
-				reg_data * 20, chg_data->soft_reg_current);
-
-		reg_data = (chg_data->soft_reg_current / 20);
-		pr_debug("%s: reg_data(0x%02x)\n", __func__, reg_data);
-		max77693_write_reg(i2c, MAX77693_CHG_REG_CHG_CNFG_09, reg_data);
+		max77693_reduce_input(chg_data, SW_REG_CURR_STEP_MA);
 
 		wake_lock(&chg_data->softreg_wake_lock);
 		schedule_delayed_work(&chg_data->softreg_work,
 				msecs_to_jiffies(SW_REG_STEP_DELAY));
 	} else {
-		pr_info("%s: (recover) stable power\n", __func__);
+
+		/* check cable detached */
+		if ((chgin_dtls == 0x0) && (vbvolt == 0x0)) {
+			pr_info("%s: maybe cable is detached\n", __func__);
+			chg_data->soft_reg_state = false;
+			chg_data->soft_reg_ing = false;
+		}
+
+		/* for margin */
+		if (chg_data->soft_reg_ing == true) {
+			pr_info("%s: stable power, reduce 1 more step "
+						"for margin\n", __func__);
+			max77693_reduce_input(chg_data, SW_REG_CURR_STEP_MA);
+			chg_data->soft_reg_ing = false;
+		}
+
 		wake_unlock(&chg_data->softreg_wake_lock);
 	}
 
@@ -1153,9 +1267,11 @@ static int max77693_charger_set_property(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_STATUS:
 		max77693_set_charger_state(chg_data, val->intval);
 		break;
+#if !defined(USE_CHGIN_INTR)
 	case POWER_SUPPLY_PROP_ONLINE:
 		max77693_set_muic_cb_type(chg_data, val->intval);
 		break;
+#endif
 	case POWER_SUPPLY_PROP_CURRENT_MAX:
 		max77693_set_input_current(chg_data, val->intval);
 		break;
@@ -1172,6 +1288,7 @@ static int max77693_charger_set_property(struct power_supply *psy,
 static irqreturn_t max77693_bypass_irq(int irq, void *data)
 {
 	struct max77693_charger_data *chg_data = data;
+	bool need_reg_init = false;
 	u8 int_ok, dtls_02;
 	u8 byp_dtls;
 #ifdef CONFIG_USB_HOST_NOTIFY
@@ -1181,6 +1298,13 @@ static irqreturn_t max77693_bypass_irq(int irq, void *data)
 	pr_info("%s: irq(%d)\n", __func__, irq);
 
 	mutex_lock(&chg_data->irq_lock);
+
+	/* check and unlock */
+	need_reg_init = max77693_charger_unlock(chg_data);
+	if (need_reg_init) {
+		pr_err("%s: charger locked state, reg init\n", __func__);
+		max77693_charger_reg_init(chg_data);
+	}
 
 	max77693_read_reg(chg_data->max77693->i2c,
 				MAX77693_CHG_REG_CHG_INT_OK,
@@ -1228,7 +1352,8 @@ static irqreturn_t max77693_bypass_irq(int irq, void *data)
 
 	cancel_delayed_work(&chg_data->update_work);
 	wake_lock(&chg_data->update_wake_lock);
-	schedule_delayed_work(&chg_data->update_work, msecs_to_jiffies(100));
+	schedule_delayed_work(&chg_data->update_work,
+			msecs_to_jiffies(STABLE_POWER_DELAY));
 
 	mutex_unlock(&chg_data->irq_lock);
 
@@ -1239,12 +1364,21 @@ static irqreturn_t max77693_bypass_irq(int irq, void *data)
 static irqreturn_t max77693_charger_irq(int irq, void *data)
 {
 	struct max77693_charger_data *chg_data = data;
-	u8 prev_int_ok, int_ok, dtls_00, dtls_01;
-	u8 thm_dtls, chgin_dtls, chg_dtls, bat_dtls;
-	u8 mu_st2;
+	bool need_reg_init = false;
+	u8 prev_int_ok, int_ok;
+	u8 dtls_00, thm_dtls, chgin_dtls;
+	u8 dtls_01, chg_dtls, bat_dtls;
+	u8 mu_st2, vbvolt;
 	pr_info("%s: irq(%d)\n", __func__, irq);
 
 	mutex_lock(&chg_data->irq_lock);
+
+	/* check and unlock */
+	need_reg_init = max77693_charger_unlock(chg_data);
+	if (need_reg_init) {
+		pr_err("%s: charger locked state, reg init\n", __func__);
+		max77693_charger_reg_init(chg_data);
+	}
 
 	max77693_read_reg(chg_data->max77693->i2c,
 				MAX77693_CHG_REG_CHG_INT_OK,
@@ -1283,14 +1417,28 @@ static irqreturn_t max77693_charger_irq(int irq, void *data)
 	/* muic */
 	max77693_read_reg(chg_data->max77693->muic,
 				MAX77693_MUIC_REG_STATUS2, &mu_st2);
+	vbvolt = ((mu_st2 & MAX77693_VBVOLT) >>
+				MAX77693_VBVOLT_SHIFT);
 	pr_info("%s: INT_OK(0x%x), THM(0x%x), CHGIN(0x%x), CHG(0x%x), BAT(0x%x), "
 						"ST2(0x%x)\n", __func__,
 						int_ok, thm_dtls, chgin_dtls,
 						chg_dtls, bat_dtls, mu_st2);
 
+#if defined(USE_CHGIN_INTR)
+	if ((chgin_dtls == 0x0) && (vbvolt == 0x1)) {
+		pr_info("%s: abnormal power state: chgin(%d), vb(%d)\n",
+						__func__, chgin_dtls, vbvolt);
+		/* software regulation */
+		wake_lock(&chg_data->softreg_wake_lock);
+		schedule_delayed_work(&chg_data->softreg_work,
+				msecs_to_jiffies(SW_REG_STEP_DELAY));
+	}
+#endif
+
 	cancel_delayed_work(&chg_data->update_work);
 	wake_lock(&chg_data->update_wake_lock);
-	schedule_delayed_work(&chg_data->update_work, msecs_to_jiffies(500));
+	schedule_delayed_work(&chg_data->update_work,
+			msecs_to_jiffies(STABLE_POWER_DELAY));
 
 	mutex_unlock(&chg_data->irq_lock);
 
@@ -1301,10 +1449,18 @@ static irqreturn_t max77693_charger_irq(int irq, void *data)
 static irqreturn_t wpc_charger_irq(int irq, void *data)
 {
 	struct max77693_charger_data *chg_data = data;
+	bool need_reg_init = false;
 	int wc_w_state, wc_v_state, wc_v_pud_state;
 	pr_info("%s: irq(%d)\n", __func__, irq);
 
 	mutex_lock(&chg_data->irq_lock);
+
+	/* check and unlock */
+	need_reg_init = max77693_charger_unlock(chg_data);
+	if (need_reg_init) {
+		pr_err("%s: charger locked state, reg init\n", __func__);
+		max77693_charger_reg_init(chg_data);
+	}
 
 	wc_w_state = wc_v_state = 0;
 
@@ -1349,7 +1505,7 @@ static irqreturn_t wpc_charger_irq(int irq, void *data)
 			cancel_delayed_work(&chg_data->update_work);
 			wake_lock(&chg_data->update_wake_lock);
 			schedule_delayed_work(&chg_data->update_work,
-						msecs_to_jiffies(500));
+				msecs_to_jiffies(STABLE_POWER_DELAY));
 		}
 
 		chg_data->wc_w_state = wc_w_state;
@@ -1442,8 +1598,12 @@ static __devinit int max77693_charger_probe(struct platform_device *pdev)
 	struct max77693_dev *max77693 = dev_get_drvdata(pdev->dev.parent);
 	struct max77693_platform_data *pdata = dev_get_platdata(max77693->dev);
 	int ret;
+	pr_info("%s: charger init\n", __func__);
 
-	pr_info("%s: charger init start\n", __func__);
+	if (!pdata) {
+		pr_err("%s: no platform data\n", __func__);
+		return -ENODEV;
+	}
 
 	chg_data = kzalloc(sizeof(struct max77693_charger_data), GFP_KERNEL);
 	if (!chg_data)
@@ -1460,6 +1620,9 @@ static __devinit int max77693_charger_probe(struct platform_device *pdev)
 	wake_lock_init(&chg_data->softreg_wake_lock, WAKE_LOCK_SUSPEND,
 		       "charger-softreg");
 
+	/* unlock charger setting protect */
+	max77693_charger_unlock(chg_data);
+
 	chg_data->charger_pdata = pdata->charger_data;
 	if (!pdata->charger_data->init_data)
 		max77693_charger_reg_init(chg_data);
@@ -1471,6 +1634,9 @@ static __devinit int max77693_charger_probe(struct platform_device *pdev)
 	chg_data->irq_battery = max77693->irq_base + MAX77693_CHG_IRQ_BAT_I;
 	chg_data->irq_charge = max77693->irq_base + MAX77693_CHG_IRQ_CHG_I;
 	chg_data->irq_chargin = max77693->irq_base + MAX77693_CHG_IRQ_CHGIN_I;
+
+	INIT_DELAYED_WORK(&chg_data->update_work, max77693_update_work);
+	INIT_DELAYED_WORK(&chg_data->softreg_work, max77693_softreg_work);
 
 	chg_data->charger.name = "max77693-charger",
 	chg_data->charger.type = POWER_SUPPLY_TYPE_BATTERY,
@@ -1484,12 +1650,6 @@ static __devinit int max77693_charger_probe(struct platform_device *pdev)
 		pr_err("%s: failed: power supply register\n", __func__);
 		goto err_kfree;
 	}
-
-	INIT_DELAYED_WORK_DEFERRABLE(&chg_data->update_work,
-					max77693_update_work);
-
-	INIT_DELAYED_WORK_DEFERRABLE(&chg_data->softreg_work,
-					max77693_softreg_work);
 
 	ret = request_threaded_irq(chg_data->irq_bypass, NULL,
 			max77693_bypass_irq, 0, "bypass-irq", chg_data);
@@ -1509,9 +1669,17 @@ static __devinit int max77693_charger_probe(struct platform_device *pdev)
 		pr_err("%s: fail to request charge IRQ: %d: %d\n",
 				__func__, chg_data->irq_charge, ret);
 
+#if defined(USE_CHGIN_INTR)
+	ret = request_threaded_irq(chg_data->irq_chargin, NULL,
+			max77693_charger_irq, 0, "chargin-irq", chg_data);
+	if (ret < 0)
+		pr_err("%s: fail to request charge IRQ: %d: %d\n",
+				__func__, chg_data->irq_chargin, ret);
+#endif
+
 #ifdef CONFIG_BATTERY_WPC_CHARGER
 	chg_data->wc_pwr_det = chg_data->charger_pdata->wc_pwr_det;
-#if defined(CONFIG_MACH_M0) || defined(CONFIG_MACH_C1VZW) || \
+#if defined(CONFIG_MACH_M0) || \
 	defined(CONFIG_MACH_GRANDE) || defined(CONFIG_MACH_IRON)
 	if (system_rev >= 0xA)
 		chg_data->wc_pwr_det = true;
@@ -1520,7 +1688,7 @@ static __devinit int max77693_charger_probe(struct platform_device *pdev)
 	if (system_rev >= 0x6)
 		chg_data->wc_pwr_det = true;
 #endif
-#if defined(CONFIG_MACH_C2)
+#if defined(CONFIG_MACH_M3)
 		chg_data->wc_pwr_det = true;
 #endif
 
@@ -1619,7 +1787,7 @@ wpc_init_finish:
 #endif
 #endif
 
-	pr_info("%s: charger init complete\n", __func__);
+	pr_info("%s: probe complete\n", __func__);
 
 	return 0;
 

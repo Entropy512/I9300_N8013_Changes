@@ -24,6 +24,9 @@
 #define MAX(x, y)	((x) > (y) ? (x) : (y))
 #define MIN(x, y)	((x) < (y) ? (x) : (y))
 #define ABS(x)		((x) < 0 ? (-1 * (x)) : (x))
+#define INRANGE(val, x, y)	(((x <= val) && (val <= y)) ||	\
+				 ((y <= val) && (val <= x)) ? 1 : 0)
+
 
 /* common */
 enum {
@@ -79,6 +82,7 @@ struct battery_info {
 	unsigned int charge_virt_state;
 	unsigned int charge_type;
 	unsigned int charge_current;
+	unsigned int charge_current_avg;
 	unsigned int input_current;
 
 	/* battery state */
@@ -121,9 +125,15 @@ struct battery_info {
 	/* ambiguous state */
 	unsigned int ambiguous_state;
 
+	/* event sceanario */
+	unsigned int event_state;
+	unsigned int event_type;
+
 	/* time management */
 	unsigned int charge_start_time;
-	struct alarm	alarm;
+	struct timespec current_time;
+	struct alarm	monitor_alarm;
+	struct alarm	event_alarm;
 	bool		slow_poll;
 	ktime_t		last_poll;
 
@@ -135,6 +145,11 @@ struct battery_info {
 
 	/* factory mode */
 	bool factory_mode;
+
+#if defined(CONFIG_TARGET_LOCALE_KOR)
+	/* error test charging off mode */
+	bool errortest_stopcharging;
+#endif
 
 #if defined(CONFIG_TARGET_LOCALE_KOR) || defined(CONFIG_MACH_M0_CTC)
 	bool is_unspec_phase;
@@ -149,6 +164,13 @@ struct battery_info {
 
 /* jig state */
 extern bool is_jig_attached;
+
+/* charger detect source */
+#if defined(CONFIG_MACH_M0) || defined(CONFIG_TARGET_LOCALE_KOR)
+#undef USE_CHGIN_INTR
+#else
+#define USE_CHGIN_INTR
+#endif
 
 /*
  * Use for charger
@@ -199,12 +221,16 @@ enum soc_type {
 #define ADC_ERR_DELAY	200
 
 /* voltage diff for recharge voltage calculation */
-#if defined(CONFIG_TARGET_LOCALE_KOR)
+#if defined(CONFIG_TARGET_LOCALE_KOR) || defined(CONFIG_MACH_M0_CTC)
 /* KOR model spec : max-voltage minus 60mV */
 #define RECHG_DROP_VALUE	60000
 #else
 #define RECHG_DROP_VALUE	50000	/* 4300mV */
 #endif
+
+/* power off condition, low %duV than VOLTAGE_MIN_DESIGN & SOC 0% */
+#define PWROFF_MARGIN		100000
+#define PWROFF_SOC		0
 
 enum {
 	CHARGE_DISABLE = 0,
@@ -234,6 +260,15 @@ enum {
 
 	TEMPER_UNKNOWN,
 };
+
+/* vf detect source */
+enum {
+	VF_DET_ADC = 0,
+	VF_DET_CHARGER,
+
+	VF_DET_UNKNOWN,
+};
+
 
 /* siop state */
 enum {
@@ -276,6 +311,31 @@ enum led_pattern {
 	BATT_LED_PATT_OFF = 0,
 	BATT_LED_PATT_CHG,
 	BATT_LED_PATT_NOT_CHG,
+};
+
+/* event case */
+enum event_type {
+	EVENT_TYPE_WCDMA_CALL = 0,
+	EVENT_TYPE_GSM_CALL,
+	EVENT_TYPE_CALL,
+	EVENT_TYPE_VIDEO,
+	EVENT_TYPE_MUSIC,
+	EVENT_TYPE_BROWSER,
+	EVENT_TYPE_HOTSPOT,
+	EVENT_TYPE_CAMERA,
+	EVENT_TYPE_DATA_CALL,
+	EVENT_TYPE_GPS,
+	EVENT_TYPE_LTE,
+	EVENT_TYPE_WIFI,
+	EVENT_TYPE_USE,
+
+	EVENT_TYPE_MAX,
+};
+
+enum event_state {
+	EVENT_STATE_CLEAR = 0,
+	EVENT_STATE_IN_TIMER,
+	EVENT_STATE_SET,
 };
 
 /**
@@ -327,12 +387,34 @@ struct samsung_battery_platform_data {
 	int freeze_stop_temp;
 	int freeze_recovery_temp;
 
-	/* Temperature source 0: fuelgauge, 1: ap adc, 2: ex. adc */
+	/* CTIA spec */
+	bool ctia_spec;
+
+	/* event sceanario */
+	unsigned int event_time;
+
+	/* CTIA temperature */
+	int event_overheat_stop_temp;
+	int event_overheat_recovery_temp;
+	int event_freeze_stop_temp;
+	int event_freeze_recovery_temp;
+	int lpm_overheat_stop_temp;
+	int lpm_overheat_recovery_temp;
+	int lpm_freeze_stop_temp;
+	int lpm_freeze_recovery_temp;
+
+	/* temperature source 0: fuelgauge, 1: ap adc, 2: ex. adc */
 	int temper_src;
 	int temper_ch;
 #ifdef CONFIG_S3C_ADC
 	int (*covert_adc) (int, int);
 #endif
+
+	/* battery vf source 0: adc(polling), 1: charger(interrupt) */
+	int vf_det_src;
+	int vf_det_ch;
+	int vf_det_th_l;
+	int vf_det_th_h;
 
 	/* suspend in charging */
 	bool suspend_chging;
