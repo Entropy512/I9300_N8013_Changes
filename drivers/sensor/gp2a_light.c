@@ -264,19 +264,35 @@ int lightsensor_get_adc(void)
 	D0_raw_data = (get_data[1] << 8) | get_data[0];	/* clear */
 	D1_raw_data = (get_data[3] << 8) | get_data[2];	/* IR */
 	if (is_gp2a030a()) {
-		if (100 * D1_raw_data <= 41 * D0_raw_data) {
-			light_alpha = 736;
-			light_beta = 0;
-		} else if (100 * D1_raw_data <= 62 * D0_raw_data) {
-			light_alpha = 1855;
-			light_beta = 2693;
-		} else if (100 * D1_raw_data <= d0_boundary * D0_raw_data) {
-			light_alpha = 544;
-			light_beta = 595;
-		} else {
-			light_alpha = 0;
-			light_beta = 0;
-		}
+		#if defined(CONFIG_MACH_GRANDE)
+			if (100 * D1_raw_data <= 41 * D0_raw_data) {
+				light_alpha = 1186;
+				light_beta = 0;
+			} else if (100 * D1_raw_data <= 62 * D0_raw_data) {
+				light_alpha = 2930;
+				light_beta = 4252;
+			} else if (100 * D1_raw_data <= d0_boundary * D0_raw_data) {
+				light_alpha = 924;
+				light_beta = 1015;
+			} else {
+				light_alpha = 0;
+				light_beta = 0;
+			}
+		#else
+			if (100 * D1_raw_data <= 41 * D0_raw_data) {
+				light_alpha = 736;
+				light_beta = 0;
+			} else if (100 * D1_raw_data <= 62 * D0_raw_data) {
+				light_alpha = 1855;
+				light_beta = 2693;
+			} else if (100 * D1_raw_data <= d0_boundary * D0_raw_data) {
+				light_alpha = 544;
+				light_beta = 595;
+			} else {
+				light_alpha = 0;
+				light_beta = 0;
+			}
+		#endif
 	} else {
 		if (lightsensor_mode) {	/* HIGH_MODE */
 			if (100 * D1_raw_data <= 32 * D0_raw_data) {
