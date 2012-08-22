@@ -18,6 +18,11 @@
 #include <linux/mfd/max77693.h>
 #include <linux/mfd/max77693-private.h>
 #include <linux/leds-max77693.h>
+#include <linux/ctype.h>
+
+#ifdef CONFIG_LEDS_SWITCH
+#include <linux/gpio.h>
+#endif
 
 struct max77693_led_data {
 	struct led_classdev led;
@@ -72,6 +77,9 @@ static u8 led_current_shift[MAX77693_LED_MAX] = {
 	0,
 	4,
 };
+
+struct class *flash_class;
+struct device *flash_dev;
 
 static int max77693_set_bits(struct i2c_client *client, const u8 reg,
 			     const u8 mask, const u8 inval)
@@ -238,6 +246,34 @@ static int max77693_led_setup(struct max77693_led_data *led_data)
 	return ret;
 }
 
+static ssize_t max77693_power(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t size)
+{
+	struct led_classdev *led_cdev = dev_get_drvdata(dev);
+	ssize_t ret = -EINVAL;
+	char *after;
+	unsigned long state = simple_strtoul(buf, &after, 10);
+	size_t count = after - buf;
+
+	if (isspace(*after))
+		count++;
+
+	if (count == size) {
+		ret = count;
+
+		if (state > led_cdev->max_brightness)
+			state = led_cdev->max_brightness;
+		led_cdev->brightness = state;
+		if (!(led_cdev->flags & LED_SUSPENDED))
+			led_cdev->brightness_set(led_cdev, state);
+	}
+
+	return ret;
+}
+
+static DEVICE_ATTR(flash_power, S_IWUSR|S_IWGRP|S_IROTH,
+	NULL, max77693_power);
+
 static int max77693_led_probe(struct platform_device *pdev)
 {
 	int ret = 0;
@@ -303,12 +339,34 @@ static int max77693_led_probe(struct platform_device *pdev)
 		ret = max77693_led_setup(led_data);
 		if (unlikely(ret)) {
 			pr_err("unable to register LED\n");
+			mutex_destroy(&led_data->lock);
 			led_classdev_unregister(&led_data->led);
 			kfree(led_data);
 			ret = -EFAULT;
 		}
 	}
 	/* print_all_reg_value(max77693->i2c); */
+
+	flash_class = class_create(THIS_MODULE, "flash");
+	if (flash_class < 0)
+		pr_err("Failed to create class(flash)!\n");
+
+	flash_dev = device_create(flash_class, NULL, 0, led_datas[2], "flash");
+	if (flash_dev < 0)
+		pr_err("Failed to create device(flash)!\n");
+
+	if (device_create_file(flash_dev, &dev_attr_flash_power) < 0) {
+		pr_err("failed to create device file, %s\n",
+				dev_attr_flash_power.attr.name);
+	}
+
+#ifdef CONFIG_LEDS_SWITCH
+	if (gpio_request(GPIO_CAM_SW_EN, "CAM_SW_EN"))
+		pr_err("failed to request CAM_SW_EN\n");
+	else
+		gpio_direction_output(GPIO_CAM_SW_EN, 1);
+#endif
+
 	return ret;
 }
 
@@ -327,6 +385,10 @@ static int __devexit max77693_led_remove(struct platform_device *pdev)
 		kfree(led_datas[i]);
 	}
 	kfree(led_datas);
+
+	device_remove_file(flash_dev, &dev_attr_flash_power);
+	device_destroy(flash_class, 0);
+	class_destroy(flash_class);
 
 	return 0;
 }

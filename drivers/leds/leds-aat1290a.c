@@ -203,7 +203,9 @@ static int aat1290a_led_probe(struct platform_device *pdev)
 		LED_ERROR("failed to create device file, %s\n",
 				dev_attr_flash_power.attr.name);
 	}
-	led_pdata->initGpio();
+
+	if (led_pdata)
+		led_pdata->initGpio();
 	aat1290a_setGpio();
 	return 0;
 }
