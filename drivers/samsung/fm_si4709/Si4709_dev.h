@@ -174,6 +174,7 @@ extern int Si4709_dev_init(struct i2c_client *);
 extern int Si4709_dev_exit(void);
 
 extern void Si4709_dev_mutex_init(void);
+extern void Si4709_dev_mutex_destroy(void);
 
 extern int Si4709_dev_suspend(void);
 extern int Si4709_dev_resume(void);

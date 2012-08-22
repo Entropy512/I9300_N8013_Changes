@@ -274,6 +274,11 @@ void Si4709_dev_mutex_init(void)
 	mutex_init(&(Si4709_dev.lock));
 }
 
+void Si4709_dev_mutex_destroy(void)
+{
+	mutex_destroy(&(Si4709_dev.lock));
+}
+
 int Si4709_dev_powerup(void)
 {
 	int ret = 0;
@@ -1618,18 +1623,25 @@ static int powerup(void)
 {
 	int ret = 0;
 	u16 powercfg = Si4709_dev.registers[POWERCFG];
+	unsigned int gpio_fm_rst = GPIO_FM_RST;
+
+
+#if defined(CONFIG_MACH_T0)
+	if (system_rev >= 3)
+		gpio_fm_rst = GPIO_FM_RST_REV03;
+#endif
 
 #if defined(CONFIG_MACH_M0) || defined(CONFIG_MACH_M0_CTC)
 	gpio_set_value(Si4709_dev_sw, GPIO_LEVEL_HIGH);
 #endif
 
-	gpio_set_value(GPIO_FM_RST, GPIO_LEVEL_LOW);
+	gpio_set_value(gpio_fm_rst, GPIO_LEVEL_LOW);
 	usleep_range(5, 10);
 	s3c_gpio_cfgpin(Si4709_dev_int, S3C_GPIO_OUTPUT);
 	s3c_gpio_setpull(Si4709_dev_int, S3C_GPIO_PULL_DOWN);
 	gpio_set_value(Si4709_dev_int, GPIO_LEVEL_LOW);
 	usleep_range(10, 15);
-	gpio_set_value(GPIO_FM_RST, GPIO_LEVEL_HIGH);
+	gpio_set_value(gpio_fm_rst, GPIO_LEVEL_HIGH);
 	usleep_range(5, 10);
 	s3c_gpio_cfgpin(Si4709_dev_int, S3C_GPIO_SFN(0xF));
 	s3c_gpio_setpull(Si4709_dev_int, S3C_GPIO_PULL_UP);
@@ -1655,6 +1667,13 @@ static int powerup(void)
 static int powerdown(void)
 {
 	int ret = 0;
+	unsigned int gpio_fm_rst = GPIO_FM_RST;
+
+
+#if defined(CONFIG_MACH_T0)
+	if (system_rev >= 3)
+		gpio_fm_rst = GPIO_FM_RST_REV03;
+#endif
 
 	if (!(RADIO_POWERDOWN == Si4709_dev.state.power_state)) {
 		cmd[0] = POWER_DOWN;
@@ -1666,7 +1685,7 @@ static int powerdown(void)
 		else
 			Si4709_dev.state.power_state = RADIO_POWERDOWN;
 
-		gpio_set_value(GPIO_FM_RST, GPIO_LEVEL_LOW);
+		gpio_set_value(gpio_fm_rst, GPIO_LEVEL_LOW);
 	} else
 		debug("Device already Powered-OFF\n");
 
@@ -1688,24 +1707,31 @@ static int seek(u32 *frequency, int up, int mode)
 		Si4709_dev_wait_flag = SEEK_WAITING;
 		fmSeekStart(up, mode); /* mode 0 is full scan */
 		wait();
-		do {
-			get_int = getIntStatus();
-		} while (!(get_int & STCINT));
 
 		if (Si4709_dev_wait_flag == SEEK_CANCEL) {
 			fmTuneStatus(1, 0);
-			if (ret < 0) {
+			if (ret < 0)
 				debug("seek i2c_write 2 failed");
-			}
+
 			if (ret < 0)
 				debug("seek i2c_read 1 failed");
 			else
 				*frequency = Freq;
 
 			*frequency = 0;
+
+			Si4709_dev_wait_flag = NO_WAIT;
+
+			return ret;
 		}
 
 		Si4709_dev_wait_flag = NO_WAIT;
+
+		if (!(getIntStatus() & STCINT)) {
+			printk(KERN_INFO "%s seek is failed!\n", __func__);
+			fmTuneStatus(1, 0);
+			return -1;
+		}
 
 		fmTuneStatus(0, 1);
 		if (BLTF != 1)
