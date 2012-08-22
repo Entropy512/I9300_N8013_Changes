@@ -816,6 +816,15 @@ static int fimc_is_g_ctrl(struct v4l2_subdev *sd, struct v4l2_control *ctrl)
 	case V4L2_CID_IS_FW_DEBUG_REGION_ADDR:
 		ctrl->value = dev->mem.base + FIMC_IS_DEBUG_REGION_ADDR;
 		break;
+#if defined(CONFIG_SLP)
+#define FRONT_CAM_STANDARD_REVISION	0x0b
+	case V4L2_CID_PHYSICAL_ROTATION:
+		if (system_rev < FRONT_CAM_STANDARD_REVISION)
+			ctrl->value = IS_ROTATION_90;
+		else
+			ctrl->value = IS_ROTATION_270;
+		break;
+#endif
 	default:
 		return -EINVAL;
 	}

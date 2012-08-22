@@ -357,6 +357,10 @@ static int fimc_is_probe(struct platform_device *pdev)
 		snprintf(v4l2_dev->name, sizeof(v4l2_dev->name),
 			 "%s.isp", dev_name(&dev->pdev->dev));
 	ret = v4l2_device_register(NULL, v4l2_dev);
+	if (ret) {
+		v4l2_err(v4l2_dev, "Failed to register v4l2 device\n");
+		goto err_vd_reg;
+	}
 
 	snprintf(dev->video[FIMC_IS_VIDEO_NUM_BAYER].vd.name,
 			sizeof(dev->video[FIMC_IS_VIDEO_NUM_BAYER].vd.name),

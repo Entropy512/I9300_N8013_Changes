@@ -2021,7 +2021,7 @@ static int flite_probe(struct platform_device *pdev)
 				      pdev->name);
 	if (!regs_res) {
 		dev_err(&pdev->dev, "Failed to request io memory region\n");
-		goto err_resource;
+		goto err_flite;
 	}
 
 	flite->regs_res = regs_res;
