@@ -11,6 +11,9 @@
 #include <linux/module.h>
 #include <linux/types.h>
 #include <linux/cpu.h>
+#ifdef CONFIG_MACH_Q1_BD
+#include <linux/hardirq.h>
+#endif
 #include <linux/kernel.h>
 #include <linux/notifier.h>
 #include <linux/signal.h>
@@ -395,8 +398,14 @@ void VFP_bounce(u32 trigger, u32 fpexc, struct pt_regs *regs)
 
 static void vfp_enable(void *unused)
 {
-	u32 access = get_copro_access();
+#ifdef CONFIG_MACH_Q1_BD
+	u32 access;
 
+	BUG_ON(preemptible());
+	access = get_copro_access();
+#else
+	u32 access = get_copro_access();
+#endif
 	/*
 	 * Enable full access to VFP (cp10 and cp11)
 	 */
@@ -539,7 +548,11 @@ static int __init vfp_init(void)
 	unsigned int cpu_arch = cpu_architecture();
 
 	if (cpu_arch >= CPU_ARCH_ARMv6)
+#ifdef CONFIG_MACH_Q1_BD
+		on_each_cpu(vfp_enable, NULL, 1);
+#else
 		vfp_enable(NULL);
+#endif
 
 	/*
 	 * First check that there is a VFP that we can use.
@@ -559,8 +572,9 @@ static int __init vfp_init(void)
 		printk("no double precision support\n");
 	} else {
 		hotcpu_notifier(vfp_hotplug, 0);
-
+#ifndef CONFIG_MACH_Q1_BD
 		smp_call_function(vfp_enable, NULL, 1);
+#endif
 
 		VFP_arch = (vfpsid & FPSID_ARCH_MASK) >> FPSID_ARCH_BIT;  /* Extract the architecture version */
 		printk("implementor %02x architecture %d part %02x variant %x rev %x\n",
