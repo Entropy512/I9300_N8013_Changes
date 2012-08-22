@@ -27,7 +27,9 @@
 
 #ifdef SEC_BUS_LOCK
 #include <mach/dev.h>
-#define BUS_LOCK_FREQ	267160
+#define SEC_DVFS_LOCK_TIMEOUT_MS	200
+#define SEC_BUS_LOCK_FREQ		267160
+#define SEC_BUS_LOCK_FREQ2	400200
 #endif
 
 #ifdef COOR_WORK_AROUND
@@ -42,6 +44,7 @@ extern int wacom_i2c_master_recv(struct i2c_client *client, char *buf,
 extern int wacom_i2c_test(struct wacom_i2c *wac_i2c);
 extern int wacom_i2c_coord(struct wacom_i2c *wac_i2c);
 extern int wacom_i2c_query(struct wacom_i2c *wac_i2c);
+extern int wacom_checksum(struct wacom_i2c *wac_i2c);
 extern void forced_release(struct wacom_i2c *wac_i2c);
 #ifdef WACOM_PDCT_WORK_AROUND
 extern void forced_hover(struct wacom_i2c *wac_i2c);

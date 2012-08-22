@@ -17,14 +17,17 @@
  *  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 #include <linux/kernel.h>
+#include <linux/wacom_i2c.h>
+
 unsigned char *Binary;
+bool ums_binary;
 
 #if defined(CONFIG_MACH_P4NOTE)
 const unsigned int Binary_nLength = 0xBFFF;
 const unsigned char Mpu_type = 0x22;
-const unsigned int Firmware_version_of_file = 0x200;
+const unsigned int Firmware_version_of_file = 0x228;
 unsigned char *firmware_name = "";
-const char Firmware_checksum[] = { 0x1F, 0x4d, 0x9d, 0x2f, 0x36, };
+const char Firmware_checksum[] = { 0x1F, 0x25, 0x6A, 0x62, 0x69, };
 
 #include "wacom_i2c_firm_p4.h"
 #elif defined(CONFIG_MACH_Q1_BD)
@@ -36,6 +39,15 @@ unsigned char *firmware_name = "epen/W8501.bin";
 /* checksum for 0x340 */
 const char Firmware_checksum[] = { 0x1F, 0xee, 0x06, 0x4b, 0xdd, };
 
+#elif defined(CONFIG_MACH_T0)
+const unsigned int Binary_nLength = 0xEFFF;
+const unsigned char Mpu_type = 0x28;
+unsigned int Firmware_version_of_file = 0x3A;
+unsigned char *firmware_name = "epen/W9001_B713.bin";
+
+char Firmware_checksum[] = { 0x1F, 0x78, 0x4D, 0x62, 0x01, };
+char B660X_checksum[] = { 0x1F, 0x83, 0x88, 0xD4, 0x67, };
+
 #endif
 
 void wacom_i2c_set_firm_data(unsigned char *Binary_new)
@@ -43,14 +55,27 @@ void wacom_i2c_set_firm_data(unsigned char *Binary_new)
 	if (Binary_new == NULL) {
 #if defined(CONFIG_MACH_P4NOTE)
 		Binary = (unsigned char *)Binary_48;
-#elif defined(CONFIG_MACH_Q1_BD)
+		ums_binary = false;
+#elif defined(CONFIG_MACH_Q1_BD) || defined(CONFIG_MACH_T0)
 		Binary = NULL;
 #endif
 		return;
 	}
 
 	Binary = (unsigned char *)Binary_new;
+	ums_binary = true;
 }
+
+#ifdef CONFIG_MACH_T0
+/*Return digitizer type according to board rev*/
+int wacom_i2c_get_digitizer_type(void)
+{
+	if (system_rev < 4)
+		return EPEN_DTYPE_B660;
+
+	return EPEN_DTYPE_B713;
+}
+#endif
 
 void wacom_i2c_init_firm_data(void)
 {
@@ -68,5 +93,23 @@ void wacom_i2c_init_firm_data(void)
 	} else
 		printk(KERN_DEBUG
 		       "[E-PEN] Wacom driver is working for 4.4mm pitch pad.\n");
+#elif defined(CONFIG_MACH_T0)
+	int type;
+	int i;
+
+	type = wacom_i2c_get_digitizer_type();
+
+	if (type == EPEN_DTYPE_B660) {
+		firmware_name = "epen/W9001_B660.bin";
+		Firmware_version_of_file = 0x16;
+		for (i = 0; i < 5; ++i)
+			Firmware_checksum[i] = B660X_checksum[i];
+		printk(KERN_DEBUG
+			"[E-PEN] Digitizer type is B660\n");
+	} else {
+		printk(KERN_DEBUG
+			"[E-PEN] Digitizer type is B713\n");
+	}
+	Binary = NULL;
 #endif
 }
