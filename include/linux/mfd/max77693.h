@@ -35,6 +35,13 @@ enum {
 	MAX77693_MUIC_ATTACHED
 };
 
+enum {
+	MAX77693_MUIC_DOCK_DETACHED = 0,
+	MAX77693_MUIC_DOCK_DESKDOCK,
+	MAX77693_MUIC_DOCK_CARDOCK,
+	MAX77693_MUIC_DOCK_SMARTDOCK = 8
+};
+
 /* MAX77686 regulator IDs */
 enum max77693_regulators {
 	MAX77693_ESAFEOUT1 = 0,
@@ -117,14 +124,17 @@ struct max77693_muic_data {
 	void (*usb_cb) (u8 attached);
 	void (*uart_cb) (u8 attached);
 	int (*charger_cb) (enum cable_type_muic);
-	void (*deskdock_cb) (bool attached);
-	void (*cardock_cb) (bool attached);
+	void (*dock_cb) (int type);
 	void (*mhl_cb) (int attached);
 	void (*init_cb) (void);
 	int (*set_safeout) (int path);
 	 bool(*is_mhl_attached) (void);
 	int (*cfg_uart_gpio) (void);
 	void (*jig_uart_cb) (int path);
+#if defined(CONFIG_MUIC_DET_JACK)
+	void (*earjack_cb) (int attached);
+	void (*earjackkey_cb) (int pressed, unsigned int code);
+#endif
 	int (*host_notify_cb) (int enable);
 	int gpio_usb_sel;
 	int sw_path;

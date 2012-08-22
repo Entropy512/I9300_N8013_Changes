@@ -125,6 +125,35 @@ enum {
 	UART_PATH_AP,
 };
 
+enum {
+	USB_SEL_IF = 0,
+	USB_SEL_CP,
+};
+
+enum muic_acc_type {
+	MUIC_ACC_TYPE_NONE = 0,
+	MUIC_ACC_TYPE_OTG,
+	MUIC_ACC_TYPE_MHL,
+	MUIC_ACC_TYPE_STATION,
+	MUIC_ACC_TYPE_JIG_USB_OFF,
+	MUIC_ACC_TYPE_JIG_USB_ON,
+	MUIC_ACC_TYPE_DESKDOCK,
+	MUIC_ACC_TYPE_JIG_UART_OFF,
+	MUIC_ACC_TYPE_JIG_UART_ON,
+	MUIC_ACC_TYPE_CARDOCK,
+	MUIC_ACC_TYPE_TA,
+	MUIC_ACC_TYPE_USB,
+	MUIC_ACC_TYPE_UNKNOWN
+};
+
+enum muic_chg_type {
+	MUIC_CHG_TYPE_NONE = 0,
+	MUIC_CHG_TYPE_USB,
+	MUIC_CHG_TYPE_TA,
+	MUIC_CHG_TYPE_MHL_VB,
+	MUIC_CHG_TYPE_UNKNOWN
+};
+
 enum cable_type {
 	CABLE_TYPE_NONE = 0,
 	CABLE_TYPE_USB,
@@ -153,18 +182,13 @@ struct max8997_muic_data {
 	void		(*init_cb) (void);
 	int		(*set_safeout) (int path);
 	bool		(*is_mhl_attached) (void);
-#if !defined(CONFIG_MACH_U1CAMERA_BD)
 	int		(*cfg_uart_gpio) (void);
-#endif /* CONFIG_MACH_U1CAMERA_BD */
 	void		(*jig_uart_cb) (int path);
 	int		(*host_notify_cb) (int enable);
-#if !defined(CONFIG_MACH_U1CAMERA_BD)
 	int		gpio_usb_sel;
-#endif /* CONFIG_MACH_U1CAMERA_BD */
-	int		sw_path;
-#if !defined(CONFIG_MACH_U1CAMERA_BD)
+	int		gpio_uart_sel;
+	int		usb_path;
 	int		uart_path;
-#endif /* CONFIG_MACH_U1CAMERA_BD */
 };
 
 struct max8997_buck1_dvs_funcs {
