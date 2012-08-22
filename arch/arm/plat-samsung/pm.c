@@ -359,7 +359,10 @@ static int s3c_pm_enter(suspend_state_t state)
 static int s3c_pm_prepare(void)
 {
 	/* prepare check area if configured */
-
+#if defined(CONFIG_MACH_P8LTE) \
+	|| defined(CONFIG_MACH_U1_NA_SPR)
+	disable_hlt();
+#endif
 	s3c_pm_check_prepare();
 
 	if (pm_prepare)
@@ -374,6 +377,10 @@ static void s3c_pm_finish(void)
 		pm_finish();
 
 	s3c_pm_check_cleanup();
+#if defined(CONFIG_MACH_P8LTE) \
+	|| defined(CONFIG_MACH_U1_NA_SPR)
+	enable_hlt();
+#endif
 }
 
 #if defined(CONFIG_CHARGER_MANAGER)
