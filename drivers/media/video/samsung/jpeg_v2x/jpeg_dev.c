@@ -893,12 +893,16 @@ static int jpeg_probe(struct platform_device *pdev)
 #endif
 
 #ifdef CONFIG_JPEG_V2_1
-		dev->watchdog_workqueue = create_singlethread_workqueue(JPEG_NAME);
-		INIT_WORK(&dev->watchdog_work, jpeg_watchdog_worker);
-		atomic_set(&dev->watchdog_cnt, 0);
-		init_timer(&dev->watchdog_timer);
-		dev->watchdog_timer.data = (unsigned long)dev;
-		dev->watchdog_timer.function = jpeg_watchdog;
+	dev->watchdog_workqueue = create_singlethread_workqueue(JPEG_NAME);
+	if (!dev->watchdog_workqueue) {
+		ret = -ENOMEM;
+		goto err_video_reg;
+	}
+	INIT_WORK(&dev->watchdog_work, jpeg_watchdog_worker);
+	atomic_set(&dev->watchdog_cnt, 0);
+	init_timer(&dev->watchdog_timer);
+	dev->watchdog_timer.data = (unsigned long)dev;
+	dev->watchdog_timer.function = jpeg_watchdog;
 #endif
 	/* clock disable */
 	clk_disable(dev->clk);
@@ -1104,9 +1108,7 @@ static int __init jpeg_init(void)
 {
 	printk(KERN_CRIT "Initialize JPEG driver\n");
 
-	platform_driver_register(&jpeg_driver);
-
-	return 0;
+	return platform_driver_register(&jpeg_driver);
 }
 
 static void __exit jpeg_exit(void)

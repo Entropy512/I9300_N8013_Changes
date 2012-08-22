@@ -46,6 +46,15 @@
 #define SUPPORT_SLICE_ENCODING        0
 #endif
 
+/*---------------------------*/
+/* Memory Type               */
+/*---------------------------*/
+typedef enum {
+	MEMORY_PHY_ADDR = 0,
+	MEMORY_USRPTR = 1,
+	MEMORY_DMABUF = 2,
+} SSBSIP_MFC_MEMORY_TYPE;
+
 /*--------------------------------------------------------------------------------*/
 /* Structure and Type                                                             */
 /*--------------------------------------------------------------------------------*/

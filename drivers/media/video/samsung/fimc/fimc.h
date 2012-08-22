@@ -25,6 +25,9 @@
 #include <media/v4l2-device.h>
 #include <media/v4l2-ioctl.h>
 #include <media/videobuf-core.h>
+#ifdef CONFIG_SLP_DMABUF
+#include <media/videobuf2-core.h>
+#endif
 #include <media/v4l2-mediabus.h>
 #if defined(CONFIG_BUSFREQ_OPP) || defined(CONFIG_BUSFREQ_LOCK_WRAPPER)
 #include <mach/dev.h>
@@ -58,7 +61,11 @@
 #define FIMC_SUBDEVS		3
 #define FIMC_OUTBUFS		3
 #define FIMC_INQUEUES		10
+#if defined(CONFIG_SLP)
+#define FIMC_MAX_CTXS		8
+#else
 #define FIMC_MAX_CTXS		4
+#endif
 #define FIMC_TPID		3
 #define FIMC_CAPBUFS		32
 #define FIMC_ONESHOT_TIMEOUT	200
@@ -205,6 +212,13 @@ enum cam_mclk_status {
 	CAM_MCLK_ON,
 };
 
+enum fimc_plane_num {
+	PLANE_1 = 0x1,
+	PLANE_2 = 0x2,
+	PLANE_3 = 0x3,
+	PLANE_4 = 0x4,
+};
+
 /*
  * STRUCTURES
 */
@@ -263,6 +277,9 @@ struct fimc_capinfo {
 	/* using c210 */
 	struct list_head	outgoing_q;
 	int			nr_bufs;
+#ifdef CONFIG_SLP_DMABUF
+	int			nr_plane;
+#endif
 	int			irq;
 	int			lastirq;
 
@@ -326,6 +343,9 @@ struct fimc_ctx {
 	struct fimc_overlay	overlay;
 
 	u32			buf_num;
+#ifdef CONFIG_SLP_DMABUF
+	int			nr_plane;
+#endif
 	u32			is_requested;
 	struct fimc_buf_set	src[FIMC_OUTBUFS];
 	struct fimc_buf_set	dst[FIMC_OUTBUFS];
@@ -477,6 +497,10 @@ struct fimc_control {
 	struct timeval			before_time;
 	char 				cma_name[16];
 	bool				restart;
+#ifdef CONFIG_SLP_DMABUF
+	struct vb2_buffer       *out_bufs[VIDEO_MAX_FRAME];
+	struct vb2_buffer       *cap_bufs[VIDEO_MAX_FRAME];
+#endif
 };
 
 /* global */
@@ -766,5 +790,16 @@ static inline struct fimc_control *get_fimc_ctrl(int id)
 {
 	return &fimc_dev->ctrl[id];
 }
+#ifdef CONFIG_SLP_DMABUF
+extern void _fimc_queue_free(struct fimc_control *ctrl,
+		enum v4l2_buf_type type);
+extern int fimc_queue_alloc(struct fimc_control *ctrl, enum v4l2_buf_type type,
+		enum v4l2_memory memory, unsigned int num_buffers,
+		unsigned int num_planes);
+extern int _qbuf_dmabuf(struct fimc_control *ctrl, struct vb2_buffer *vb,
+		struct v4l2_buffer *b);
+extern int _dqbuf_dmabuf(struct fimc_control *ctrl, struct vb2_buffer *vb,
+		struct v4l2_buffer *b);
+#endif
 
 #endif /* __FIMC_H */

@@ -267,7 +267,7 @@ void s5p_mixer_ctrl_init_grp_layer(enum s5p_mixer_layer layer)
 {
 	struct s5ptvfb_user_scaling scaling;
 
-#ifdef CONFIG_HAS_EARLYSUSPEND
+#ifdef CLOCK_GATING_ON_EARLY_SUSPEND
 	if (suspend_status) {
 		tvout_dbg("driver is suspend_status\n");
 		return;
@@ -322,7 +322,7 @@ int s5p_mixer_ctrl_set_pixel_format(enum s5p_mixer_layer layer, u32 bpp, u32 tra
 
 	s5p_mixer_ctrl_private.layer[layer].format = format;
 
-#ifdef CONFIG_HAS_EARLYSUSPEND
+#ifdef CLOCK_GATING_ON_EARLY_SUSPEND
 	if (suspend_status) {
 		tvout_dbg("driver is suspend_status\n");
 		return 0;
@@ -351,7 +351,7 @@ int s5p_mixer_ctrl_enable_layer(enum s5p_mixer_layer layer)
 		tvout_err("invalid layer\n");
 		return -1;
 	}
-#ifdef CONFIG_HAS_EARLYSUSPEND
+#ifdef CLOCK_GATING_ON_EARLY_SUSPEND
 	if (suspend_status) {
 		tvout_dbg("driver is suspend_status\n");
 		return 0;
@@ -384,7 +384,7 @@ int s5p_mixer_ctrl_disable_layer(enum s5p_mixer_layer layer)
 		return -1;
 	}
 
-#ifdef CONFIG_HAS_EARLYSUSPEND
+#ifdef CLOCK_GATING_ON_EARLY_SUSPEND
 	if (suspend_status) {
 		tvout_dbg("driver is suspend_status\n");
 		return 0;
@@ -523,7 +523,7 @@ int s5p_mixer_ctrl_set_dst_win_pos(enum s5p_mixer_layer layer,
 	s5p_mixer_ctrl_private.layer[layer].dst_x = (u32)dst_x;
 	s5p_mixer_ctrl_private.layer[layer].dst_y = (u32)dst_y;
 
-#ifdef CONFIG_HAS_EARLYSUSPEND
+#ifdef CLOCK_GATING_ON_EARLY_SUSPEND
 	if (suspend_status) {
 		tvout_dbg("driver is suspend_status\n");
 		return 0;
@@ -551,7 +551,7 @@ int s5p_mixer_ctrl_set_src_win_pos(enum s5p_mixer_layer layer,
 	s5p_mixer_ctrl_private.layer[layer].width = w;
 	s5p_mixer_ctrl_private.layer[layer].height = h;
 
-#ifdef CONFIG_HAS_EARLYSUSPEND
+#ifdef CLOCK_GATING_ON_EARLY_SUSPEND
 	if (suspend_status) {
 		tvout_dbg("driver is suspend_status\n");
 		return 0;
@@ -577,7 +577,7 @@ int s5p_mixer_ctrl_set_buffer_address(enum s5p_mixer_layer layer,
 
 	s5p_mixer_ctrl_private.layer[layer].fb_addr = start_addr;
 
-#ifdef CONFIG_HAS_EARLYSUSPEND
+#ifdef CLOCK_GATING_ON_EARLY_SUSPEND
 	if (suspend_status) {
 		tvout_dbg("driver is suspend_status\n");
 		return 0;
@@ -602,7 +602,7 @@ int s5p_mixer_ctrl_set_chroma_key(enum s5p_mixer_layer layer,
 	s5p_mixer_ctrl_private.layer[layer].chroma_enable = enabled;
 	s5p_mixer_ctrl_private.layer[layer].chroma_key = chroma.key;
 
-#ifdef CONFIG_HAS_EARLYSUSPEND
+#ifdef CLOCK_GATING_ON_EARLY_SUSPEND
 	if (suspend_status) {
 		tvout_dbg("driver is suspend_status\n");
 		return 0;
@@ -709,7 +709,7 @@ int s5p_mixer_ctrl_set_alpha_blending(enum s5p_mixer_layer layer,
 	case PIXEL_BLENDING:
 		tvout_dbg("pixel blending\n");
 		s5p_mixer_ctrl_private.layer[layer].pixel_blend = true;
-#ifdef CONFIG_HAS_EARLYSUSPEND
+#ifdef CLOCK_GATING_ON_EARLY_SUSPEND
 		if (suspend_status) {
 			tvout_dbg("driver is suspend_status\n");
 			return 0;
@@ -723,7 +723,7 @@ int s5p_mixer_ctrl_set_alpha_blending(enum s5p_mixer_layer layer,
 		tvout_dbg("layer blending : alpha value = 0x%x\n", alpha);
 		s5p_mixer_ctrl_private.layer[layer].layer_blend = true;
 		s5p_mixer_ctrl_private.layer[layer].alpha = alpha;
-#ifdef CONFIG_HAS_EARLYSUSPEND
+#ifdef CLOCK_GATING_ON_EARLY_SUSPEND
 		if (suspend_status) {
 			tvout_dbg("driver is suspend_status\n");
 			return 0;
@@ -739,7 +739,7 @@ int s5p_mixer_ctrl_set_alpha_blending(enum s5p_mixer_layer layer,
 		tvout_dbg("alpha blending off\n");
 		s5p_mixer_ctrl_private.layer[layer].pixel_blend = false;
 		s5p_mixer_ctrl_private.layer[layer].layer_blend = false;
-#ifdef CONFIG_HAS_EARLYSUSPEND
+#ifdef CLOCK_GATING_ON_EARLY_SUSPEND
 		if (suspend_status) {
 			tvout_dbg("driver is suspend_status\n");
 			return 0;
@@ -780,7 +780,7 @@ int s5p_mixer_ctrl_scaling(enum s5p_mixer_layer layer,
 	s5p_mixer_ctrl_private.layer[layer].ver = scaling.ver;
 	s5p_mixer_ctrl_private.layer[layer].hor = scaling.hor;
 
-#ifdef CONFIG_HAS_EARLYSUSPEND
+#ifdef CLOCK_GATING_ON_EARLY_SUSPEND
 	if (suspend_status) {
 		tvout_dbg("driver is suspend_status\n");
 		return 0;
@@ -840,7 +840,7 @@ void s5p_mixer_ctrl_stop(void)
 
 	tvout_dbg("running(%d)\n", s5p_mixer_ctrl_private.running);
 	if (s5p_mixer_ctrl_private.running) {
-#ifdef CONFIG_HAS_EARLYSUSPEND
+#ifdef CLOCK_GATING_ON_EARLY_SUSPEND
 		if (suspend_status) {
 			tvout_dbg("driver is suspend_status\n");
 		} else

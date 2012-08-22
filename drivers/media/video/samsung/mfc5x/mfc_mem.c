@@ -670,7 +670,12 @@ int mfc_init_mem_mgr(struct mfc_dev *dev)
 			size = MAX_MEM_OFFSET;
 		}
 
+#ifdef CONFIG_SLP
+		base[0] = cma_alloc(dev->device, "AB", MFC_FW_SYSTEM_SIZE,
+			ALIGN_128KB);
+#else
 		base[0] = cma_alloc(dev->device, "AB", size, ALIGN_128KB);
+#endif
 		if (IS_ERR_VALUE(base[0])) {
 			mfc_err("failed to get rsv. memory from CMA");
 			return -ENOMEM;
@@ -702,7 +707,12 @@ int mfc_init_mem_mgr(struct mfc_dev *dev)
 			size = MAX_MEM_OFFSET;
 		}
 
+#ifdef CONFIG_SLP
+		base[0] = cma_alloc(dev->device, cma_index ? "B" : "A",
+			MFC_FW_SYSTEM_SIZE, ALIGN_128KB);
+#else
 		base[0] = cma_alloc(dev->device, cma_index ? "B" : "A", size, ALIGN_128KB);
+#endif
 		if (IS_ERR_VALUE(base[0])) {
 			mfc_err("failed to get rsv. memory from CMA on port #0");
 			return -ENOMEM;
@@ -724,7 +734,12 @@ int mfc_init_mem_mgr(struct mfc_dev *dev)
 			size = MAX_MEM_OFFSET;
 		}
 
+#ifdef CONFIG_SLP
+		base[1] = cma_index ? cma_infos[1].lower_bound :
+			cma_infos[0].lower_bound;
+#else
 		base[1] = cma_alloc(dev->device, cma_index ? "B" : "A", size, ALIGN_128KB);
+#endif
 		if (IS_ERR_VALUE(base[1])) {
 			mfc_err("failed to get rsv. memory from CMA on port #1");
 			cma_free(base[0]);

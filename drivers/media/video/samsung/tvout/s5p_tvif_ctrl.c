@@ -50,6 +50,11 @@
 #include <mach/dev.h>
 #endif
 
+#ifdef CONFIG_HDMI_TX_STRENGTH
+#include <plat/tvout.h>
+#endif
+
+
 #include "s5p_tvout_common_lib.h"
 #include "hw_if/hw_if.h"
 #include "s5p_tvout_ctrl.h"
@@ -2380,6 +2385,12 @@ int s5p_hdmi_ctrl_phy_power(bool on)
 		s5p_hdmi_phy_init(s5p_hdmi_ctrl_private.reg_mem[HDMI_PHY].base);
 
 		s5p_hdmi_phy_power(true);
+#ifdef CONFIG_HDMI_TX_STRENGTH
+		if (s5p_tvif_ctrl_private.tx_val)
+			s5p_hdmi_phy_set_tx_strength(
+			s5p_tvif_ctrl_private.tx_ch,
+			s5p_tvif_ctrl_private.tx_val);
+#endif
 
 	} else {
 		/*
@@ -2447,7 +2458,7 @@ void s5p_hdmi_ctrl_stop(void)
 	tvout_dbg("running(%d)\n", ctrl->running);
 	if (ctrl->running) {
 		ctrl->running = false;
-#ifdef CONFIG_HAS_EARLYSUSPEND
+#ifdef CLOCK_GATING_ON_EARLY_SUSPEND
 		if (suspend_status) {
 			tvout_dbg("driver is suspend_status\n");
 		} else
@@ -2681,7 +2692,7 @@ static int s5p_tvif_ctrl_internal_stop(void)
 	case TVOUT_HDMI:
 	case TVOUT_HDMI_RGB:
 		s5p_hdmi_ctrl_stop();
-#ifdef CONFIG_HAS_EARLYSUSPEND
+#ifdef CLOCK_GATING_ON_EARLY_SUSPEND
 		if (suspend_status) {
 			tvout_dbg("driver is suspend_status\n");
 		} else
@@ -2854,7 +2865,7 @@ int s5p_tvif_ctrl_start(
 		goto cannot_change;
 	}
 
-#ifdef CONFIG_HAS_EARLYSUSPEND
+#ifdef CLOCK_GATING_ON_EARLY_SUSPEND
 	if (suspend_status) {
 		tvout_dbg("driver is suspend_status\n");
 	} else
@@ -2889,6 +2900,16 @@ void s5p_tvif_ctrl_stop(void)
 
 int s5p_tvif_ctrl_constructor(struct platform_device *pdev)
 {
+#ifdef CONFIG_HDMI_TX_STRENGTH
+	struct s5p_platform_tvout *pdata = to_tvout_plat(&pdev->dev);
+	s5p_tvif_ctrl_private.tx_ch = 0x00;
+	s5p_tvif_ctrl_private.tx_val = NULL;
+	if ((pdata) && (pdata->tx_tune)) {
+		s5p_tvif_ctrl_private.tx_ch = pdata->tx_tune->tx_ch;
+		s5p_tvif_ctrl_private.tx_val = pdata->tx_tune->tx_val;
+	}
+#endif
+
 #ifdef CONFIG_ANALOG_TVENC
 	if (s5p_sdo_ctrl_constructor(pdev))
 		goto err;

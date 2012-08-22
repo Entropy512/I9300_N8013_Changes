@@ -1021,6 +1021,255 @@ static int fimc_mmap(struct file *filp, struct vm_area_struct *vma)
 	return ret;
 }
 
+#ifdef CONFIG_SLP_DMABUF
+/**
+ * _fimc_dmabuf_put() - release memory associated with
+ * a DMABUF shared buffer
+ */
+static void _fimc_dmabuf_put(struct vb2_buffer *vb)
+{
+	unsigned int plane;
+
+	for (plane = 0; plane < vb->num_planes; ++plane) {
+		void *mem_priv = vb->planes[plane].mem_priv;
+
+		if (mem_priv) {
+			dma_buf_detach(vb->planes[plane].dbuf,
+					vb->planes[plane].mem_priv);
+			dma_buf_put(vb->planes[plane].dbuf);
+			vb->planes[plane].dbuf = NULL;
+			vb->planes[plane].mem_priv = NULL;
+		}
+	}
+}
+
+void _fimc_queue_free(struct fimc_control *ctrl, enum v4l2_buf_type type)
+{
+	unsigned int buffer;
+	struct vb2_buffer *vb;
+
+	for (buffer = 0; buffer < VIDEO_MAX_FRAME; ++buffer) {
+		if (V4L2_TYPE_IS_OUTPUT(type))
+			vb = ctrl->out_bufs[buffer];
+		else
+			vb = ctrl->cap_bufs[buffer];
+
+		if (!vb)
+			continue;
+		_fimc_dmabuf_put(vb);
+		kfree(vb);
+		vb = NULL;
+	}
+}
+
+int fimc_queue_alloc(struct fimc_control *ctrl, enum v4l2_buf_type type,
+		enum v4l2_memory memory, unsigned int num_buffers,
+		unsigned int num_planes)
+{
+	unsigned int buffer;
+	struct vb2_buffer *vb;
+
+	for (buffer = 0; buffer < num_buffers; ++buffer) {
+		vb = kzalloc(sizeof(struct vb2_buffer), GFP_KERNEL);
+		if (!vb) {
+			fimc_err("%s: Memory alloc for buffer struct failed\n",
+				__func__);
+			break;
+		}
+
+		if (V4L2_TYPE_IS_MULTIPLANAR(type))
+			vb->v4l2_buf.length = num_planes;
+
+		vb->num_planes = num_planes;
+		vb->v4l2_buf.index = buffer;
+		vb->v4l2_buf.type = type;
+		vb->v4l2_buf.memory = memory;
+
+		if (V4L2_TYPE_IS_OUTPUT(type))
+			ctrl->out_bufs[buffer] = vb;
+		else
+			ctrl->cap_bufs[buffer] = vb;
+	}
+
+	for (buffer = num_buffers; buffer < VIDEO_MAX_FRAME; ++buffer) {
+		ctrl->out_bufs[buffer] = NULL;
+		ctrl->cap_bufs[buffer] = NULL;
+	}
+
+	return buffer;
+}
+
+static inline int _verify_planes_array(struct vb2_buffer *vb,
+				const struct v4l2_buffer *b)
+{
+	if (NULL == b->m.planes) {
+		printk(KERN_ERR "%s: Multi-planar buffer passwd but planes"
+			" array not provided\n", __func__);
+		return -EINVAL;
+	}
+	if (b->length < vb->num_planes || b->length > VIDEO_MAX_PLANES) {
+		printk(KERN_ERR "%s: Incorrect planes array length, "
+			"expected %d, got %d\n", __func__,
+			vb->num_planes, b->length);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+static int _fill_v4l2_buffer(struct vb2_buffer *vb, struct v4l2_buffer *b,
+			struct v4l2_plane *v4l2_planes)
+{
+	int plane;
+	int ret;
+
+	memcpy(b, &vb->v4l2_buf, offsetof(struct v4l2_buffer, m));
+	b->input = vb->v4l2_buf.input;
+	b->reserved = vb->v4l2_buf.reserved;
+
+	if (V4L2_TYPE_IS_MULTIPLANAR(b->type)) {
+		ret = _verify_planes_array(vb, b);
+		if (ret)
+			return ret;
+
+		memcpy(b->m.planes, vb->v4l2_planes,
+			b->length * sizeof(struct v4l2_plane));
+
+		for (plane = 0; plane < vb->num_planes; ++plane)
+			b->m.planes[plane].m.fd =
+				vb->v4l2_planes[plane].m.fd;
+	} else {
+		b->length = vb->v4l2_planes[0].length;
+		b->bytesused = vb->v4l2_planes[0].bytesused;
+		b->m.fd = vb->v4l2_planes[0].m.fd;
+	}
+
+	return ret;
+}
+
+static int _fill_vb2_buffer(struct vb2_buffer *vb, struct v4l2_buffer *b,
+			struct v4l2_plane *v4l2_planes)
+{
+	unsigned int plane;
+	int ret;
+
+	if (V4L2_TYPE_IS_MULTIPLANAR(b->type)) {
+		ret = _verify_planes_array(vb, b);
+		if (ret)
+			return ret;
+
+		if (V4L2_TYPE_IS_OUTPUT(b->type)) {
+			for (plane = 0; plane < vb->num_planes; ++plane) {
+				v4l2_planes[plane].bytesused =
+					b->m.planes[plane].bytesused;
+				v4l2_planes[plane].data_offset =
+					b->m.planes[plane].data_offset;
+			}
+		}
+		for (plane = 0; plane < vb->num_planes; ++plane)
+			v4l2_planes[plane].m.fd =
+				b->m.planes[plane].m.fd;
+
+	} else {
+		if (V4L2_TYPE_IS_OUTPUT(b->type))
+			v4l2_planes[0].bytesused =
+					b->bytesused;
+			v4l2_planes[0].m.fd = b->m.fd;
+	}
+
+	vb->v4l2_buf.field = b->field;
+	vb->v4l2_buf.timestamp = b->timestamp;
+	vb->v4l2_buf.input = b->input;
+
+	return 0;
+}
+
+int _qbuf_dmabuf(struct fimc_control *ctrl, struct vb2_buffer *vb,
+	struct v4l2_buffer *b)
+{
+	struct v4l2_plane planes[VIDEO_MAX_PLANES];
+	unsigned int plane;
+	struct sg_table *sg;
+	struct dma_buf_attachment *dba;
+	int ret;
+
+	ret = _fill_vb2_buffer(vb, b, planes);
+	if (ret)
+		return ret;
+
+	for (plane = 0; plane < vb->num_planes; ++plane) {
+		struct dma_buf *dbuf = dma_buf_get(planes[plane].m.fd);
+
+		if (IS_ERR_OR_NULL(dbuf)) {
+			fimc_err("dmabuf get error!!! %x\n", plane);
+			ret = PTR_ERR(dbuf);
+			goto err;
+		}
+		planes[plane].length = dbuf->size;
+
+		/* Skip the plane if already verified */
+		if (dbuf == vb->planes[plane].dbuf) {
+			dma_buf_put(dbuf);
+			continue;
+		}
+
+		vb->planes[plane].mem_priv = NULL;
+
+		dba = dma_buf_attach(dbuf, ctrl->dev);
+		if (IS_ERR(dba)) {
+			fimc_err("failed to attach dmabuf\n");
+			dma_buf_put(dbuf);
+			ret = PTR_ERR(dba);
+			goto err;
+		}
+
+		sg = dma_buf_map_attachment(dba, DMA_BIDIRECTIONAL);
+		if (IS_ERR(sg)) {
+			fimc_err("qbuf: failed acquiring dmabuf "
+					"memory for plane\n");
+			ret = PTR_ERR(sg);
+			goto err;
+		}
+		dba->priv = sg;
+
+		vb->planes[plane].dbuf = dbuf;
+		vb->planes[plane].mem_priv = dba;
+
+		vb->v4l2_planes[plane] = planes[plane];
+	}
+
+	return 0;
+
+err:
+	_fimc_dmabuf_put(vb);
+
+	return ret;
+}
+
+int _dqbuf_dmabuf(struct fimc_control *ctrl, struct vb2_buffer *vb,
+		struct v4l2_buffer *b)
+{
+	struct v4l2_plane planes[VIDEO_MAX_PLANES];
+	struct sg_table *sg[VIDEO_MAX_PLANES];
+	struct dma_buf_attachment *dba[VIDEO_MAX_PLANES];
+	unsigned int plane;
+	int ret;
+
+	ret = _fill_v4l2_buffer(vb, b, planes);
+	if (ret)
+		return ret;
+
+	for (plane = 0; plane < vb->num_planes; ++plane) {
+		dba[plane] = vb->planes[plane].mem_priv;
+		sg[plane] = dba[plane]->priv;
+		dma_buf_unmap_attachment(dba[plane],
+			sg[plane], DMA_FROM_DEVICE);
+	}
+
+	return 0;
+}
+#endif
+
 static u32 fimc_poll(struct file *filp, poll_table *wait)
 {
 	struct fimc_prv_data *prv_data =
@@ -1425,6 +1674,9 @@ static int fimc_release(struct file *filp)
 		} else {
 			ctrl->out->ctx_used[ctx_id] = false;
 		}
+#ifdef CONFIG_SLP_DMABUF
+		_fimc_queue_free(ctrl, V4L2_BUF_TYPE_VIDEO_OUTPUT);
+#endif
 	}
 
 	if (ctrl->cap) {
@@ -1445,6 +1697,9 @@ static int fimc_release(struct file *filp)
 		}
 		kfree(ctrl->cap);
 		ctrl->cap = NULL;
+#ifdef CONFIG_SLP_DMABUF
+		_fimc_queue_free(ctrl, V4L2_BUF_TYPE_VIDEO_CAPTURE);
+#endif
 	}
 
 	/*
@@ -1840,7 +2095,7 @@ static int __devinit fimc_probe(struct platform_device *pdev)
 	ret = device_create_file(&(pdev->dev), &dev_attr_range_mode);
 	if (ret < 0) {
 		fimc_err("failed to add sysfs entries for range mode\n");
-		goto err_global;
+		goto err_create_file;
 	}
 	printk(KERN_INFO "FIMC%d registered successfully\n", ctrl->id);
 #if (defined(CONFIG_EXYNOS_DEV_PD) && defined(CONFIG_PM_RUNTIME))
@@ -1848,7 +2103,7 @@ static int __devinit fimc_probe(struct platform_device *pdev)
 	ctrl->fimc_irq_wq = create_workqueue(buf);
 	if (ctrl->fimc_irq_wq == NULL) {
 		fimc_err("failed to create_workqueue\n");
-		goto err_global;
+		goto err_wq;
 	}
 
 	INIT_WORK(&ctrl->work_struct, s3c_fimc_irq_work);
@@ -1868,6 +2123,12 @@ static int __devinit fimc_probe(struct platform_device *pdev)
 		fimc_err("%s: request_irq failed\n", __func__);
 
 	return 0;
+
+err_wq:
+	 device_remove_file(&(pdev->dev), &dev_attr_range_mode);
+
+err_create_file:
+	 device_remove_file(&(pdev->dev), &dev_attr_log_level);
 
 err_global:
 	video_unregister_device(ctrl->vd);

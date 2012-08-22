@@ -154,9 +154,13 @@ static void s5p_hpd_kobject_uevent(void)
 					   KOBJ_CHANGE, envp);
 #endif
 			HPDPRINTK("[HDMI] HPD event -connect!!!\n");
-			on_start_process = true;
-			HPDIFPRINTK("%s() on_start_process(%d)\n",
-				__func__, on_start_process);
+			if (atomic_read(&hdmi_status) == HDMI_OFF) {
+				on_start_process = true;
+				HPDIFPRINTK("%s() on_start_process(%d)\n",
+						__func__, on_start_process);
+			} else {
+				on_start_process = false;
+			}
 		}
 		last_uevent_state = HPD_HI;
 	} else {
@@ -175,8 +179,12 @@ static void s5p_hpd_kobject_uevent(void)
 			kobject_uevent_env(&(hpd_misc_device.this_device->kobj),
 					   KOBJ_CHANGE, envp);
 #endif
-			HPDPRINTK("[HDMI] HPD event -disconnet!!!\n");
-			on_stop_process = true;
+			if (atomic_read(&hdmi_status) == HDMI_ON) {
+				on_stop_process = true;
+				HPDPRINTK("[HDMI] HPD event -disconnet!!!\n");
+			} else {
+				on_stop_process = false;
+			}
 #ifdef CONFIG_HDMI_CONTROLLED_BY_EXT_IC
 			hpd_struct.ext_ic_control(false);
 #endif

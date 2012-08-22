@@ -31,6 +31,11 @@
 #include "mfc_buf.h"
 #include "mfc_interface.h"
 
+#ifdef CONFIG_SLP_DMABUF
+#include <linux/dma-buf.h>
+#include <media/videobuf2-core.h>
+#endif
+
 static LIST_HEAD(mfc_encoders);
 
 /*
@@ -1590,6 +1595,65 @@ err_handling:
 	return ret;
 }
 
+#ifdef CONFIG_SLP_DMABUF
+static int mfc_qbuf_dmabuf(struct mfc_inst_ctx *ctx, struct vb2_plane *planes,
+			int fd, dma_addr_t *dma_addr)
+{
+	struct sg_table *sg;
+	struct dma_buf *dbuf;
+	struct dma_buf_attachment *dba;
+
+	dbuf = dma_buf_get(fd);
+	if (IS_ERR_OR_NULL(dbuf)) {
+		mfc_err("dmabuf get error!!!\n");
+		dma_buf_put(dbuf);
+		return -EINVAL;
+	}
+
+	/* Skip the plane if already verified */
+	if (dbuf == planes->dbuf) {
+		dma_buf_put(dbuf);
+		return 0;
+	}
+
+	dba = dma_buf_attach(dbuf, ctx->dev->device);
+	if (IS_ERR(dba)) {
+		mfc_err("failed to attach dmabuf\n");
+		dma_buf_put(dbuf);
+		return -EINVAL;
+	}
+
+	sg = dma_buf_map_attachment(dba, DMA_BIDIRECTIONAL);
+	if (IS_ERR(sg)) {
+		dma_buf_detach(dbuf, dba);
+		dma_buf_put(dbuf);
+		return PTR_ERR(sg);
+	}
+	dba->priv = sg;
+
+	planes->dbuf = dbuf;
+	planes->mem_priv = dba;
+
+	*dma_addr = sg_dma_address(sg->sgl);
+
+	return 0;
+}
+
+static int mfc_dqbuf_dmabuf(struct mfc_inst_ctx *ctx, struct vb2_plane *plane)
+{
+
+	struct sg_table *sg;
+	struct dma_buf_attachment *dba;
+
+	dba = plane->mem_priv;
+	sg = dba->priv;
+
+	dma_buf_unmap_attachment(dba, sg, DMA_FROM_DEVICE);
+
+	return 0;
+}
+#endif
+
 static int mfc_encoding_frame(struct mfc_inst_ctx *ctx, struct mfc_enc_exe_arg *exe_arg)
 {
 	int ret;
@@ -1597,6 +1661,9 @@ static int mfc_encoding_frame(struct mfc_inst_ctx *ctx, struct mfc_enc_exe_arg *
 	void *ump_handle;
 #endif
 	struct mfc_enc_ctx *enc_ctx = (struct mfc_enc_ctx *)ctx->c_priv;
+#ifdef CONFIG_SLP_DMABUF
+	dma_addr_t dma_addr[MFC_NUM_PLANE];
+#endif
 
 	/* Set Frame Tag */
 	write_shm(ctx, exe_arg->in_frametag, SET_FRAME_TAG);
@@ -1648,12 +1715,46 @@ static int mfc_encoding_frame(struct mfc_inst_ctx *ctx, struct mfc_enc_exe_arg *
 	#endif
 
 	/* Set current frame buffer addr */
+#ifdef CONFIG_SLP_DMABUF
+	if (exe_arg->memory_type == MEMORY_DMABUF) {
+		ret = mfc_qbuf_dmabuf(ctx, ctx->enc_planes[0],
+				exe_arg->in_Y_addr, &dma_addr[0]);
+		if (ret) {
+			mfc_err("mfc_qbuf_dmabuf Y error!!! ret = %d\n", ret);
+			return -EINVAL;
+		}
+		ret = mfc_qbuf_dmabuf(ctx, ctx->enc_planes[1],
+				exe_arg->in_CbCr_addr, &dma_addr[1]);
+		if (ret) {
+			mfc_err("mfc_qbuf_dmabuf CbCr error!!! ret = %d\n",
+				ret);
+			ret = mfc_dqbuf_dmabuf(ctx, ctx->enc_planes[0]);
+			if (ret)
+				mfc_err("mfc_dqbuf_dmabuf Y error!! ret = %d\n",
+					ret);
+			return -EINVAL;
+		}
+	}
+
+#if (MFC_MAX_MEM_PORT_NUM == 2)
+	write_reg((dma_addr[0] - mfc_mem_base(1)) >> 11,
+		MFC_ENC_SI_CH1_CUR_Y_ADR);
+	write_reg((dma_addr[1] - mfc_mem_base(1)) >> 11,
+		MFC_ENC_SI_CH1_CUR_C_ADR);
+#else
+	write_reg((dma_addr[0] - mfc_mem_base(0)) >> 11,
+		MFC_ENC_SI_CH1_CUR_Y_ADR);
+	write_reg((dma_addr[1] - mfc_mem_base(0)) >> 11,
+		MFC_ENC_SI_CH1_CUR_C_ADR);
+#endif
+#else
 #if (MFC_MAX_MEM_PORT_NUM == 2)
 	write_reg((exe_arg->in_Y_addr - mfc_mem_base(1)) >> 11, MFC_ENC_SI_CH1_CUR_Y_ADR);
 	write_reg((exe_arg->in_CbCr_addr - mfc_mem_base(1)) >> 11, MFC_ENC_SI_CH1_CUR_C_ADR);
 #else
 	write_reg((exe_arg->in_Y_addr - mfc_mem_base(0)) >> 11, MFC_ENC_SI_CH1_CUR_Y_ADR);
 	write_reg((exe_arg->in_CbCr_addr - mfc_mem_base(0)) >> 11, MFC_ENC_SI_CH1_CUR_C_ADR);
+#endif
 #endif
 
 	#if 0
@@ -1680,8 +1781,33 @@ static int mfc_encoding_frame(struct mfc_inst_ctx *ctx, struct mfc_enc_exe_arg *
 		exe_arg->out_encoded_size = read_reg(MFC_ENC_SI_STRM_SIZE);
 
 		/* FIXME: port must be checked */
-		exe_arg->out_Y_addr = mfc_mem_addr_ofs(read_reg(MFC_ENCODED_Y_ADDR) << 11, 1);
-		exe_arg->out_CbCr_addr = mfc_mem_addr_ofs(read_reg(MFC_ENCODED_C_ADDR) << 11, 1);
+#ifdef CONFIG_SLP_DMABUF
+		if (exe_arg->memory_type == MEMORY_DMABUF) {
+			exe_arg->out_Y_addr =
+				mfc_get_buf_dmabuf(mfc_mem_addr_ofs
+				(read_reg(MFC_ENCODED_Y_ADDR) << 11, 1));
+			if (exe_arg->out_Y_addr < 0) {
+				mfc_err("mfc_get_buf_dmabuf : Get Y fd error %d\n",
+					exe_arg->out_Y_addr);
+				return MFC_ENC_EXE_ERR;
+			}
+			exe_arg->out_CbCr_addr =
+				mfc_get_buf_dmabuf(mfc_mem_addr_ofs
+				(read_reg(MFC_ENCODED_C_ADDR) << 11, 1));
+			if (exe_arg->out_CbCr_addr < 0) {
+				mfc_err("mfc_get_buf_dmabuf : Get CbCr fd error %d\n",
+					exe_arg->out_CbCr_addr);
+				return MFC_ENC_EXE_ERR;
+			}
+		} else {
+#endif
+			exe_arg->out_Y_addr = mfc_mem_addr_ofs
+				(read_reg(MFC_ENCODED_Y_ADDR) << 11, 1);
+			exe_arg->out_CbCr_addr = mfc_mem_addr_ofs
+				(read_reg(MFC_ENCODED_C_ADDR) << 11, 1);
+#ifdef CONFIG_SLP_DMABUF
+		}
+#endif
 #if SUPPORT_SLICE_ENCODING
 	} else {			/* slice */
 		ret = mfc_cmd_slice_start(ctx);
@@ -1699,8 +1825,35 @@ static int mfc_encoding_frame(struct mfc_inst_ctx *ctx, struct mfc_enc_exe_arg *
 			exe_arg->out_encoded_size = enc_ctx->slicesize;
 
 			/* FIXME: port must be checked */
-			exe_arg->out_Y_addr = mfc_mem_addr_ofs(read_reg(MFC_ENCODED_Y_ADDR) << 11, 1);
-			exe_arg->out_CbCr_addr = mfc_mem_addr_ofs(read_reg(MFC_ENCODED_C_ADDR) << 11, 1);
+#ifdef CONFIG_SLP_DMABUF
+			if (exe_arg->memory_type == MEMORY_DMABUF) {
+				exe_arg->out_Y_addr =
+					mfc_get_buf_dmabuf(mfc_mem_addr_ofs
+					(read_reg(MFC_ENCODED_Y_ADDR)
+					<< 11, 1));
+				if (exe_arg->out_Y_addr < 0) {
+					mfc_err("mfc_get_buf_dmabuf : Get Y fd error %d\n",
+						exe_arg->out_Y_addr);
+					return MFC_ENC_EXE_ERR;
+				}
+				exe_arg->out_CbCr_addr =
+					mfc_get_buf_dmabuf(mfc_mem_addr_ofs
+					(read_reg(MFC_ENCODED_C_ADDR)
+					<< 11, 1));
+				if (exe_arg->out_CbCr_addr < 0) {
+					mfc_err("mfc_get_buf_dmabuf : Get CbCr fd error %d\n",
+						exe_arg->out_CbCr_addr);
+					return MFC_ENC_EXE_ERR;
+				}
+			} else {
+#endif
+				exe_arg->out_Y_addr = mfc_mem_addr_ofs
+					(read_reg(MFC_ENCODED_Y_ADDR) << 11, 1);
+				exe_arg->out_CbCr_addr = mfc_mem_addr_ofs
+					(read_reg(MFC_ENCODED_C_ADDR) << 11, 1);
+#ifdef CONFIG_SLP_DMABUF
+			}
+#endif
 		}
 	}
 
@@ -1765,6 +1918,9 @@ int mfc_exec_encoding(struct mfc_inst_ctx *ctx, union mfc_args *args)
 {
 	struct mfc_enc_exe_arg *exe_arg;
 	int ret;
+#ifdef CONFIG_SLP_DMABUF
+	int err;
+#endif
 	/*
 	struct mfc_enc_ctx *enc_ctx = (struct mfc_enc_ctx *)ctx->c_priv;
 	*/
@@ -1786,6 +1942,21 @@ int mfc_exec_encoding(struct mfc_inst_ctx *ctx, union mfc_args *args)
 	}
 
 	mfc_set_inst_state(ctx, INST_STATE_EXE_DONE);
+
+#ifdef CONFIG_SLP_DMABUF
+	if (exe_arg->memory_type == MEMORY_DMABUF) {
+		err = mfc_dqbuf_dmabuf(ctx, ctx->enc_planes[0]);
+		if (err) {
+			mfc_err("mfc_dqbuf_dmabuf error!!! ret = %d\n", err);
+			return -EINVAL;
+		}
+		err = mfc_dqbuf_dmabuf(ctx, ctx->enc_planes[1]);
+		if (err) {
+			mfc_err("mfc_dqbuf_dmabuf error!!! ret = %d\n", err);
+			return -EINVAL;
+		}
+	}
+#endif
 
 	return ret;
 }
