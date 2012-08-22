@@ -4,6 +4,8 @@
  *
  * Inki Dae, <inki.dae@samsung.com>
  * Donghwa Lee, <dh09.lee@samsung.com>
+ * Joongmock Shin <jmock.shin@samsung.com>
+ * Eunchul Kim <chulspro.kim@samsung.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -21,6 +23,7 @@
 #include <linux/irq.h>
 #include <linux/interrupt.h>
 #include <linux/lcd.h>
+#include <linux/lcd-property.h>
 #include <linux/fb.h>
 #include <linux/backlight.h>
 #include <linux/regulator/consumer.h>
@@ -28,7 +31,12 @@
 
 #include <video/mipi_display.h>
 
+#include <plat/cpu.h>
 #include <plat/mipi_dsim2.h>
+
+#if defined(CONFIG_ARM_EXYNOS4_DISPLAY_DEVFREQ) || defined(CONFIG_DISPFREQ_OPP)
+#include <linux/devfreq/exynos4_display.h>
+#endif
 
 #include "s6e8aa0_gamma.h"
 #ifdef CONFIG_BACKLIGHT_SMART_DIMMING
@@ -43,10 +51,62 @@
 #define MIN_BRIGHTNESS		(0)
 #define MAX_BRIGHTNESS		(24)
 
+/* 1 */
+#define PANELCTL_SS_MASK	(1 << 5)
+#define PANELCTL_SS_1_800	(0 << 5)
+#define PANELCTL_SS_800_1	(1 << 5)
+#define PANELCTL_GTCON_MASK	(7 << 2)
+#define PANELCTL_GTCON_110	(6 << 2)
+#define PANELCTL_GTCON_111	(7 << 2)
+/* LTPS */
+/* 30 */
+#define PANELCTL_CLK1_CON_MASK	(7 << 3)
+#define PANELCTL_CLK1_000	(0 << 3)
+#define PANELCTL_CLK1_001	(1 << 3)
+#define PANELCTL_CLK2_CON_MASK	(7 << 0)
+#define PANELCTL_CLK2_000	(0 << 0)
+#define PANELCTL_CLK2_001	(1 << 0)
+/* 31 */
+#define PANELCTL_INT1_CON_MASK	(7 << 3)
+#define PANELCTL_INT1_000	(0 << 3)
+#define PANELCTL_INT1_001	(1 << 3)
+#define PANELCTL_INT2_CON_MASK	(7 << 0)
+#define PANELCTL_INT2_000	(0 << 0)
+#define PANELCTL_INT2_001	(1 << 0)
+/* 32 */
+#define PANELCTL_BICTL_CON_MASK	(7 << 3)
+#define PANELCTL_BICTL_000	(0 << 3)
+#define PANELCTL_BICTL_001	(1 << 3)
+#define PANELCTL_BICTLB_CON_MASK	(7 << 0)
+#define PANELCTL_BICTLB_000	(0 << 0)
+#define PANELCTL_BICTLB_001	(1 << 0)
+/* 36 */
+#define PANELCTL_EM_CLK1_CON_MASK	(7 << 3)
+#define PANELCTL_EM_CLK1_110	(6 << 3)
+#define PANELCTL_EM_CLK1_111	(7 << 3)
+#define PANELCTL_EM_CLK1B_CON_MASK	(7 << 0)
+#define PANELCTL_EM_CLK1B_110	(6 << 0)
+#define PANELCTL_EM_CLK1B_111	(7 << 0)
+/* 37 */
+#define PANELCTL_EM_CLK2_CON_MASK	(7 << 3)
+#define PANELCTL_EM_CLK2_110	(6 << 3)
+#define PANELCTL_EM_CLK2_111	(7 << 3)
+#define PANELCTL_EM_CLK2B_CON_MASK	(7 << 0)
+#define PANELCTL_EM_CLK2B_110	(6 << 0)
+#define PANELCTL_EM_CLK2B_111	(7 << 0)
+/* 38 */
+#define PANELCTL_EM_INT1_CON_MASK	(7 << 3)
+#define PANELCTL_EM_INT1_000	(0 << 3)
+#define PANELCTL_EM_INT1_001	(1 << 3)
+#define PANELCTL_EM_INT2_CON_MASK	(7 << 0)
+#define PANELCTL_EM_INT2_000	(0 << 0)
+#define PANELCTL_EM_INT2_001	(1 << 0)
+
 #define VER_142			(0x8e)	/* MACH_SLP_PQ */
 #define VER_174			(0xae)	/* MACH_SLP_PQ Dali */
 #define VER_42			(0x2a)	/* MACH_SLP_PQ_LTE */
 #define VER_32			(0x20)	/* MACH_SLP_PQ M0 B-Type */
+#define VER_96			(0x60)	/* MACH_SLP_PQ Galaxy S3 */
 #define VER_210			(0xd2)	/* MACH_SLP_PQ M0 A-Type */
 
 #define AID_DISABLE		(0x4)
@@ -96,6 +156,7 @@ struct s6e8aa0 {
 
 	struct mipi_dsim_lcd_device	*dsim_dev;
 	struct lcd_platform_data	*ddi_pd;
+	struct lcd_property	*property;
 
 	struct mutex			lock;
 	struct regulator		*reg_vdd3;
@@ -103,6 +164,10 @@ struct s6e8aa0 {
 
 	const struct panel_model	*model;
 	unsigned int		model_count;
+
+#if defined(CONFIG_ARM_EXYNOS4_DISPLAY_DEVFREQ) || defined(CONFIG_DISPFREQ_OPP)
+	struct notifier_block	nb_disp;
+#endif
 
 	bool				enabled;
 #ifdef CONFIG_BACKLIGHT_SMART_DIMMING
@@ -112,8 +177,6 @@ struct s6e8aa0 {
 	struct mutex			bl_lock;
 #endif
 };
-
-struct s6e8aa0 *lcd_global;
 
 static void s6e8aa0_regulator_enable(struct s6e8aa0 *lcd)
 {
@@ -178,9 +241,8 @@ static unsigned char s6e8aa0_apply_aid_panel_cond(unsigned int aid)
 	return ret;
 }
 
-void s6e8aa0_panel_cond(int high_freq)
+static void s6e8aa0_panel_cond(struct s6e8aa0 *lcd, int high_freq)
 {
-	struct s6e8aa0 *lcd = lcd_global;
 	struct mipi_dsim_master_ops *ops = lcd_to_master_ops(lcd);
 	unsigned char data_to_send_v42[] = {
 		0xf8, 0x01, 0x34, 0x00, 0x00, 0x00, 0x95, 0x00, 0x3c,
@@ -204,6 +266,13 @@ void s6e8aa0_panel_cond(int high_freq)
 		0x23, 0x6e, 0xc0, 0xc1, 0x01, 0x81, 0xc1, 0x00, 0xc3,
 		0xf6, 0xf6, 0xc1
 	};
+	unsigned char data_to_send_v96[] = {
+		0xf8, 0x19, 0x35, 0x00, 0x00, 0x00, 0x94, 0x00, 0x3c,
+		0x7d, 0x10, 0x27, 0x08, 0x6e, 0x00, 0x00, 0x00, 0x00,
+		0x04, 0x08, 0x6e, 0x00, 0x00, 0x00, 0x00, 0x08, 0x08,
+		0x23, 0x37, 0xc0, 0xc1, 0x01, 0x81, 0xc1, 0x00, 0xc3,
+		0xf6, 0xf6, 0xc1
+	};
 	unsigned char data_to_send_v210[] = {
 		0xf8, 0x3d, 0x32, 0x00, 0x00, 0x00, 0x8d, 0x00, 0x39,
 		0x78, 0x08, 0x26, 0x78, 0x3c, 0x00, 0x00, 0x00, 0x20,
@@ -213,17 +282,92 @@ void s6e8aa0_panel_cond(int high_freq)
 	};
 	unsigned char *data_to_send;
 	unsigned int size;
+	struct lcd_property	*property = lcd->property;
+	unsigned char cfg;
 
 	if (lcd->ver == VER_42) {
 		data_to_send = data_to_send_v42;
 		size = ARRAY_SIZE(data_to_send_v42);
-	} else if (lcd->ver == VER_142 || lcd->ver == VER_174) {
+	} else if (lcd->ver == VER_142) {
+		data_to_send_v142[18] = s6e8aa0_apply_aid_panel_cond(lcd->aid);
+		data_to_send = data_to_send_v142;
+		if (property) {
+			if (property->flip & LCD_PROPERTY_FLIP_VERTICAL) {
+				/* GTCON */
+				cfg = data_to_send[1];
+				cfg &= ~(PANELCTL_GTCON_MASK);
+				cfg |= (PANELCTL_GTCON_110);
+				data_to_send[1] = cfg;
+			}
+
+			if (property->flip & LCD_PROPERTY_FLIP_HORIZONTAL) {
+				/* SS */
+				cfg = data_to_send[1];
+				cfg &= ~(PANELCTL_SS_MASK);
+				cfg |= (PANELCTL_SS_1_800);
+				data_to_send[1] = cfg;
+			}
+
+			if (property->flip & (LCD_PROPERTY_FLIP_VERTICAL |
+			LCD_PROPERTY_FLIP_HORIZONTAL)) {
+				/* CLK1,2_CON */
+				cfg = data_to_send[30];
+				cfg &= ~(PANELCTL_CLK1_CON_MASK |
+					PANELCTL_CLK2_CON_MASK);
+				cfg |= (PANELCTL_CLK1_000 | PANELCTL_CLK2_001);
+				data_to_send[30] = cfg;
+
+				/* INT1,2_CON */
+				cfg = data_to_send[31];
+				cfg &= ~(PANELCTL_INT1_CON_MASK |
+					PANELCTL_INT2_CON_MASK);
+				cfg |= (PANELCTL_INT1_000 | PANELCTL_INT2_001);
+				data_to_send[31] = cfg;
+
+				/* BICTL,B_CON */
+				cfg = data_to_send[32];
+				cfg &= ~(PANELCTL_BICTL_CON_MASK |
+					PANELCTL_BICTLB_CON_MASK);
+				cfg |= (PANELCTL_BICTL_000 |
+					PANELCTL_BICTLB_001);
+				data_to_send[32] = cfg;
+
+				/* EM_CLK1,1B_CON */
+				cfg = data_to_send[36];
+				cfg &= ~(PANELCTL_EM_CLK1_CON_MASK |
+					PANELCTL_EM_CLK1B_CON_MASK);
+				cfg |= (PANELCTL_EM_CLK1_110 |
+					PANELCTL_EM_CLK1B_110);
+				data_to_send[36] = cfg;
+
+				/* EM_CLK2,2B_CON */
+				cfg = data_to_send[37];
+				cfg &= ~(PANELCTL_EM_CLK2_CON_MASK |
+					PANELCTL_EM_CLK2B_CON_MASK);
+				cfg |= (PANELCTL_EM_CLK2_110 |
+					PANELCTL_EM_CLK2B_110);
+				data_to_send[37] = cfg;
+
+				/* EM_INT1,2_CON */
+				cfg = data_to_send[38];
+				cfg &= ~(PANELCTL_EM_INT1_CON_MASK |
+					PANELCTL_EM_INT2_CON_MASK);
+				cfg |= (PANELCTL_EM_INT1_000 |
+					PANELCTL_EM_INT2_001);
+				data_to_send[38] = cfg;
+			}
+		}
+		size = ARRAY_SIZE(data_to_send_v142);
+	} else if (lcd->ver == VER_174) {
 		data_to_send_v142[18] = s6e8aa0_apply_aid_panel_cond(lcd->aid);
 		data_to_send = data_to_send_v142;
 		size = ARRAY_SIZE(data_to_send_v142);
 	} else if (lcd->ver == VER_32) {
 		data_to_send = data_to_send_v32;
 		size = ARRAY_SIZE(data_to_send_v32);
+	} else if (lcd->ver == VER_96) {
+		data_to_send = data_to_send_v96;
+		size = ARRAY_SIZE(data_to_send_v96);
 	} else if (lcd->ver == VER_210) {
 		data_to_send = data_to_send_v210;
 		size = ARRAY_SIZE(data_to_send_v210);
@@ -270,7 +414,7 @@ static void s6e8aa0_etc_pentile_control(struct s6e8aa0 *lcd)
 		0x00
 	};
 
-	if (lcd->ver == VER_32)
+	if (lcd->ver == VER_32 || lcd->ver == VER_96)
 		data_to_send[5] = 0xc0;
 
 	ops->cmd_write(lcd_to_master(lcd), MIPI_DSI_DCS_LONG_WRITE,
@@ -306,7 +450,7 @@ static void s6e8aa0_etc_power_control(struct s6e8aa0 *lcd)
 		0xf4, 0xcf, 0x0a, 0x12, 0x10, 0x1e, 0x33, 0x02
 	};
 
-	if (lcd->ver == VER_32) {
+	if (lcd->ver == VER_32 || lcd->ver == VER_96) {
 		data_to_send[3] = 0x15;
 		data_to_send[5] = 0x19;
 	}
@@ -357,6 +501,10 @@ static void s6e8aa0_elvss_nvm_set(struct s6e8aa0 *lcd)
 	/* FIXME: !! need to change brightness and elvss */
 	if (lcd->ver == VER_32) {
 		data_to_send[8] = 0x07;
+		data_to_send[11] = 0xc1;
+	} else if (lcd->ver == VER_96) {
+		data_to_send[8] = 0x07;
+		data_to_send[9] = 0xc0;
 		data_to_send[11] = 0xc1;
 	} else if (lcd->ver == VER_210 || lcd->ver == VER_174) {
 		data_to_send[8] = 0x07;
@@ -428,14 +576,14 @@ static void s6e8aa0_acl_on(struct s6e8aa0 *lcd)
 {
 	struct mipi_dsim_master_ops *ops = lcd_to_master_ops(lcd);
 	ops->cmd_write(lcd_to_master(lcd),
-		MIPI_DSI_DCS_SHORT_WRITE, 0xc0, 0x01);
+		MIPI_DSI_DCS_SHORT_WRITE_PARAM, 0xc0, 0x01);
 }
 
 static void s6e8aa0_acl_off(struct s6e8aa0 *lcd)
 {
 	struct mipi_dsim_master_ops *ops = lcd_to_master_ops(lcd);
 	ops->cmd_write(lcd_to_master(lcd),
-		MIPI_DSI_DCS_SHORT_WRITE, 0xc0, 0x00);
+		MIPI_DSI_DCS_SHORT_WRITE_PARAM, 0xc0, 0x00);
 }
 
 static void s6e8aa0_acl_ctrl_set(struct s6e8aa0 *lcd)
@@ -620,7 +768,7 @@ static int s6e8aa0_panel_init(struct s6e8aa0 *lcd)
 	s6e8aa0_sleep_out(lcd);
 	usleep_range(5000, 6000);
 
-	s6e8aa0_panel_cond(1);
+	s6e8aa0_panel_cond(lcd, 1);
 	s6e8aa0_display_condition_set(lcd);
 
 	s6e8aa0_gamma_ctrl(lcd, lcd->bd->props.brightness);
@@ -924,10 +1072,14 @@ static int s6e8aa0_write_reg(struct s6e8aa0 *lcd, char *name)
 		return ret;
 	}
 
-	if (fw->size < 2)
+	if (fw->size == 1)
 		ret = ops->cmd_write(lcd_to_master(lcd),
 				MIPI_DSI_DCS_SHORT_WRITE,
-				(unsigned int)fw->data, fw->size);
+				(unsigned int)fw->data[0], 0);
+	else if (fw->size == 2)
+		ret = ops->cmd_write(lcd_to_master(lcd),
+				MIPI_DSI_DCS_SHORT_WRITE_PARAM,
+				(unsigned int)fw->data[0], fw->data[1]);
 	else
 		ret = ops->cmd_write(lcd_to_master(lcd),
 				MIPI_DSI_DCS_LONG_WRITE,
@@ -1017,10 +1169,37 @@ static struct panel_model s6e8aa0_model[] = {
 		.ver = VER_32,			/* MACH_SLP_PQ M0 B-Type */
 		.name = "SMD_AMS480GYXX-0",
 	}, {
+		.ver = VER_96,			/* MACH_SLP_PQ Galaxy S3 */
+		.name = "SMD_AMS480GYXX-0",
+	}, {
 		.ver = VER_210,			/* MACH_SLP_PQ M0 A-Type */
 		.name = "SMD_AMS465GS0x",
 	}
 };
+
+#if defined(CONFIG_ARM_EXYNOS4_DISPLAY_DEVFREQ) || defined(CONFIG_DISPFREQ_OPP)
+static int s6e8aa0_notifier_callback(struct notifier_block *this,
+			unsigned long event, void *_data)
+{
+	struct s6e8aa0 *lcd = container_of(this, struct s6e8aa0, nb_disp);
+
+	if (lcd->power == FB_BLANK_POWERDOWN)
+		return NOTIFY_DONE;
+
+	switch (event) {
+	case EXYNOS4_DISPLAY_LV_HF:
+		s6e8aa0_panel_cond(lcd, 1);
+		break;
+	case EXYNOS4_DISPLAY_LV_LF:
+		s6e8aa0_panel_cond(lcd, 0);
+		break;
+	default:
+		return NOTIFY_BAD;
+	}
+
+	return NOTIFY_DONE;
+}
+#endif
 
 static int s6e8aa0_probe(struct mipi_dsim_lcd_device *dsim_dev)
 {
@@ -1072,11 +1251,20 @@ static int s6e8aa0_probe(struct mipi_dsim_lcd_device *dsim_dev)
 		goto err_unregister_lcd;
 	}
 
+#if defined(CONFIG_ARM_EXYNOS4_DISPLAY_DEVFREQ) || defined(CONFIG_DISPFREQ_OPP)
+	lcd->nb_disp.notifier_call = s6e8aa0_notifier_callback;
+	ret = exynos4_display_register_client(&lcd->nb_disp);
+	if (ret < 0)
+		dev_warn(&lcd->ld->dev, "failed to register exynos-display notifier\n");
+#endif
+
 	lcd->bd->props.max_brightness = MAX_BRIGHTNESS;
 	lcd->bd->props.brightness = MAX_BRIGHTNESS;
 
 	lcd->acl_enable = 1;
 	lcd->cur_acl = 0;
+	if (lcd->ddi_pd)
+		lcd->property = lcd->ddi_pd->pdata;
 	lcd->model = s6e8aa0_model;
 	lcd->model_count = ARRAY_SIZE(s6e8aa0_model);
 	for (i = 0; i < ARRAY_SIZE(device_attrs); i++) {
@@ -1092,8 +1280,6 @@ static int s6e8aa0_probe(struct mipi_dsim_lcd_device *dsim_dev)
 
 	s6e8aa0_regulator_enable(lcd);
 	lcd->power = FB_BLANK_UNBLANK;
-
-	lcd_global = lcd;
 
 	dev_info(lcd->dev, "probed s6e8aa0 panel driver(%s).\n",
 			dev_name(&lcd->ld->dev));
@@ -1121,8 +1307,11 @@ static void s6e8aa0_remove(struct mipi_dsim_lcd_device *dsim_dev)
 	lcd_device_unregister(lcd->ld);
 
 	regulator_put(lcd->reg_vci);
-
 	regulator_put(lcd->reg_vdd3);
+
+#if defined(CONFIG_ARM_EXYNOS4_DISPLAY_DEVFREQ) || defined(CONFIG_DISPFREQ_OPP)
+	exynos4_display_unregister_client(&lcd->nb_disp);
+#endif
 
 	kfree(lcd);
 }
@@ -1183,5 +1372,7 @@ module_exit(s6e8aa0_exit);
 
 MODULE_AUTHOR("Donghwa Lee <dh09.lee@samsung.com>");
 MODULE_AUTHOR("Inki Dae <inki.dae@samsung.com>");
+MODULE_AUTHOR("Joongmock Shin <jmock.shin@samsung.com>");
+MODULE_AUTHOR("Eunchul Kim <chulspro.kim@samsung.com>");
 MODULE_DESCRIPTION("MIPI-DSI based s6e8aa0 AMOLED LCD Panel Driver");
 MODULE_LICENSE("GPL");
