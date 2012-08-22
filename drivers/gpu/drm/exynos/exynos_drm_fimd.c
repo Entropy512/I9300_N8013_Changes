@@ -32,13 +32,13 @@
 #include "exynos_drm_fbdev.h"
 #include "exynos_drm_crtc.h"
 
-#ifdef CONFIG_ARM_EXYNOS4_DISPLAY_DEVFREQ
+#if defined(CONFIG_ARM_EXYNOS4_DISPLAY_DEVFREQ) || defined(CONFIG_DISPFREQ_OPP)
 #include <linux/devfreq/exynos4_display.h>
 #endif
 
 #ifdef CONFIG_DRM_EXYNOS_FIMD_WB
 #include <plat/fimc.h>
-#ifdef CONFIG_ARM_EXYNOS4_DISPLAY_DEVFREQ
+#if defined(CONFIG_ARM_EXYNOS4_DISPLAY_DEVFREQ)  || defined(CONFIG_DISPFREQ_OPP)
 #include <plat/pd.h>
 #include <linux/pm_qos_params.h>
 #endif
@@ -125,13 +125,15 @@ struct fimd_context {
 	struct exynos_drm_panel_info *panel;
 	unsigned int			high_freq;
 	unsigned int			dynamic_refresh;
+#if defined(CONFIG_ARM_EXYNOS4_DISPLAY_DEVFREQ)  || defined(CONFIG_DISPFREQ_OPP)
 	struct notifier_block		nb_exynos_display;
+#endif
 
 	struct work_struct		work;
 	bool				errata;
 #ifdef CONFIG_DRM_EXYNOS_FIMD_WB
 	struct notifier_block	nb_ctrl;
-#ifdef CONFIG_ARM_EXYNOS4_DISPLAY_DEVFREQ
+#if defined(CONFIG_ARM_EXYNOS4_DISPLAY_DEVFREQ)  || defined(CONFIG_DISPFREQ_OPP)
 	struct pm_qos_request_list	pm_qos;
 #endif
 #endif
@@ -276,6 +278,15 @@ static int exynos_drm_change_to_mdnie(struct fimd_context *ctx)
 	/* setup mDNIe. */
 	if (mdnie_drv)
 		mdnie_drv->setup(mdnie, 1);
+
+	/*
+	 * FIXME:!! must be change init sequence
+	 * causion: do not remove this delay.
+	 * occured a line shift problem at lcd off and on
+	 * when remove this delay. need atomic operations
+	 * so, we use mdelay.
+	 */
+	mdelay(20);
 
 	/* setup FIMD-LITE. */
 	if (fimd_lite_drv)
@@ -817,6 +828,12 @@ static void exynos_fimd_schedule_work(struct work_struct *work)
 	if (mdnie && fimd_lite_dev) {
 		if (!fimd_lite_dev->enabled) {
 			while (1) {
+				if (ctx->suspended) {
+					DRM_INFO("%s:suspended[%d]\n", __func__,
+						ctx->suspended);
+					break;
+				}
+
 				ret = (__raw_readl(ctx->regs + VIDCON1)) &
 							VIDCON1_VSTATUS_MASK;
 				if (ret == VIDCON1_VSTATUS_BACKPORCH) {
@@ -881,7 +898,7 @@ static int fimd_subdrv_probe(struct drm_device *drm_dev, struct device *dev)
 	return 0;
 }
 
-static void fimd_subdrv_remove(struct drm_device *drm_dev)
+static void fimd_subdrv_remove(struct drm_device *drm_dev, struct device *dev)
 {
 	DRM_DEBUG_KMS("%s\n", __FILE__);
 
@@ -1066,10 +1083,6 @@ static void exynos_drm_change_clock(struct fimd_context *ctx)
 	if (!ctx->dynamic_refresh) {
 		timing->refresh = 60;
 		ctx->clkdiv = fimd_calc_clkdiv(ctx, timing);
-#ifdef CONFIG_LCD_S6E8AA0
-		/* workaround: To apply dynamic refresh rate */
-		s6e8aa0_panel_cond(1);
-#endif
 		if (fimd_lite_dev && fimd_lite_dev->enabled) {
 			fimd_refresh->clkdiv = ctx->clkdiv;
 			fimd_lite_drv->change_clock(fimd_refresh,
@@ -1082,10 +1095,6 @@ static void exynos_drm_change_clock(struct fimd_context *ctx)
 		}
 	} else {
 		ctx->clkdiv = fimd_calc_clkdiv(ctx, timing);
-#ifdef CONFIG_LCD_S6E8AA0
-		/* workaround: To apply dynamic refresh rate */
-		s6e8aa0_panel_cond(ctx->high_freq);
-#endif
 		if (fimd_lite_dev && fimd_lite_dev->enabled) {
 			fimd_refresh->clkdiv = ctx->clkdiv;
 			fimd_lite_drv->change_clock(fimd_refresh,
@@ -1099,7 +1108,7 @@ static void exynos_drm_change_clock(struct fimd_context *ctx)
 	}
 }
 
-#ifdef CONFIG_ARM_EXYNOS4_DISPLAY_DEVFREQ
+#if defined(CONFIG_ARM_EXYNOS4_DISPLAY_DEVFREQ) || defined(CONFIG_DISPFREQ_OPP)
 static int exynos_display_notifier_callback(struct notifier_block *this,
 			unsigned long event, void *_data)
 {
@@ -1220,7 +1229,7 @@ static int fimd_notifier_ctrl(struct notifier_block *this,
 		unsigned int refresh;
 		int *enable = (int *)&_data;
 
-#ifdef CONFIG_ARM_EXYNOS4_DISPLAY_DEVFREQ
+#if defined(CONFIG_ARM_EXYNOS4_DISPLAY_DEVFREQ) || defined(CONFIG_DISPFREQ_OPP)
 		if (*enable)
 			refresh = EXYNOS4_DISPLAY_LV_HF;
 		else
@@ -1331,6 +1340,7 @@ static int __devinit fimd_probe(struct platform_device *pdev)
 	ctx->default_win = pdata->default_win;
 	ctx->dynamic_refresh = pdata->dynamic_refresh;
 	ctx->panel = panel;
+	ctx->errata = true;
 
 	INIT_WORK(&ctx->work, exynos_fimd_schedule_work);
 
@@ -1365,7 +1375,7 @@ static int __devinit fimd_probe(struct platform_device *pdev)
 	if (ret < 0)
 		dev_err(&pdev->dev, "failed to add sysfs entries\n");
 
-#ifdef CONFIG_ARM_EXYNOS4_DISPLAY_DEVFREQ
+#if defined(CONFIG_ARM_EXYNOS4_DISPLAY_DEVFREQ) || defined(CONFIG_DISPFREQ_OPP)
 	ctx->nb_exynos_display.notifier_call = exynos_display_notifier_callback;
 	ret = exynos4_display_register_client(&ctx->nb_exynos_display);
 	if (ret < 0)
@@ -1388,7 +1398,7 @@ static int __devinit fimd_probe(struct platform_device *pdev)
 		dev_err(dev, "could not register fimd notify callback\n");
 		goto err_alloc_fail;
 	}
-#ifdef CONFIG_ARM_EXYNOS4_DISPLAY_DEVFREQ
+#if defined(CONFIG_ARM_EXYNOS4_DISPLAY_DEVFREQ) || defined(CONFIG_DISPFREQ_OPP)
 	pm_qos_add_request(&ctx->pm_qos,
 		PM_QOS_DISPLAY_FREQUENCY, EXYNOS4_DISPLAY_LV_LF);
 #endif
@@ -1443,7 +1453,7 @@ static int __devexit fimd_remove(struct platform_device *pdev)
 	exynos_drm_subdrv_unregister(&ctx->subdrv);
 #ifdef CONFIG_DRM_EXYNOS_FIMD_WB
 	fimc_unregister_client(&ctx->nb_ctrl);
-#ifdef CONFIG_ARM_EXYNOS4_DISPLAY_DEVFREQ
+#if defined(CONFIG_ARM_EXYNOS4_DISPLAY_DEVFREQ) || defined(CONFIG_DISPFREQ_OPP)
 	pm_qos_remove_request(&ctx->pm_qos);
 #endif
 #endif
@@ -1461,7 +1471,7 @@ out:
 	clk_put(ctx->bus_clk);
 
 
-#ifdef CONFIG_ARM_EXYNOS4_DISPLAY_DEVFREQ
+#if defined(CONFIG_ARM_EXYNOS4_DISPLAY_DEVFREQ) || defined(CONFIG_DISPFREQ_OPP)
 	exynos4_display_unregister_client(&ctx->nb_exynos_display);
 #endif
 

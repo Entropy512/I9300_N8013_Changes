@@ -38,12 +38,13 @@
 #include "exynos_drm_fb.h"
 #include "exynos_drm_gem.h"
 #include "exynos_drm_g2d.h"
-#include "exynos_drm_rotator.h"
+#include "exynos_drm_ipp.h"
 #include "exynos_drm_plane.h"
 #include "exynos_drm_vidi.h"
 #include "exynos_drm_dmabuf.h"
+#include "exynos_drm_iommu.h"
 
-#define DRIVER_NAME	"exynos-drm"
+#define DRIVER_NAME	"exynos"
 #define DRIVER_DESC	"Samsung SoC DRM"
 #define DRIVER_DATE	"20110530"
 #define DRIVER_MAJOR	1
@@ -109,6 +110,17 @@ static int exynos_drm_load(struct drm_device *dev, unsigned long flags)
 		return -ENOMEM;
 	}
 
+	/* maximum size of userptr is limited to 16MB as default. */
+	private->userptr_limit = SZ_16M;
+
+	/* setup device address space for iommu. */
+	private->vmm = exynos_drm_iommu_setup(0x80000000, 0x40000000);
+	if (IS_ERR(private->vmm)) {
+		DRM_ERROR("failed to setup iommu.\n");
+		kfree(private);
+		return PTR_ERR(private->vmm);
+	}
+
 	INIT_LIST_HEAD(&private->pageflip_event_list);
 	dev->dev_private = (void *)private;
 
@@ -130,8 +142,11 @@ static int exynos_drm_load(struct drm_device *dev, unsigned long flags)
 	}
 
 	for (nr = 0; nr < MAX_PLANE; nr++) {
-		ret = exynos_plane_init(dev, nr);
-		if (ret)
+		struct drm_plane *plane;
+		unsigned int possible_crtcs = (1 << MAX_CRTC) - 1;
+
+		plane = exynos_plane_init(dev, possible_crtcs, false);
+		if (!plane)
 			goto err_crtc;
 	}
 
@@ -182,7 +197,14 @@ err_crtc:
 
 static int exynos_drm_unload(struct drm_device *dev)
 {
+	struct exynos_drm_private *private;
+
+	private = dev->dev_private;
+
 	DRM_DEBUG_DRIVER("%s\n", __FILE__);
+
+	/* release vmm object and device address space for iommu. */
+	exynos_drm_iommu_cleanup(private->vmm);
 
 	exynos_drm_fbdev_fini(dev);
 	exynos_drm_device_unregister(dev);
@@ -271,6 +293,9 @@ static struct drm_ioctl_desc exynos_ioctls[] = {
 			exynos_drm_gem_userptr_ioctl, DRM_UNLOCKED),
 	DRM_IOCTL_DEF_DRV(EXYNOS_GEM_GET,
 			exynos_drm_gem_get_ioctl, DRM_UNLOCKED),
+	DRM_IOCTL_DEF_DRV(EXYNOS_USER_LIMIT,
+			exynos_drm_gem_user_limit_ioctl, DRM_MASTER |
+			DRM_ROOT_ONLY),
 	DRM_IOCTL_DEF_DRV(EXYNOS_GEM_EXPORT_UMP,
 			exynos_drm_gem_export_ump_ioctl, DRM_UNLOCKED),
 	DRM_IOCTL_DEF_DRV(EXYNOS_GEM_CACHE_OP,
@@ -280,8 +305,6 @@ static struct drm_ioctl_desc exynos_ioctls[] = {
 			exynos_drm_gem_get_phy_ioctl, DRM_UNLOCKED),
 	DRM_IOCTL_DEF_DRV(EXYNOS_GEM_PHY_IMP,
 			exynos_drm_gem_phy_imp_ioctl, DRM_UNLOCKED),
-	DRM_IOCTL_DEF_DRV(EXYNOS_PLANE_SET_ZPOS,
-			exynos_plane_set_zpos_ioctl, DRM_UNLOCKED | DRM_AUTH),
 	DRM_IOCTL_DEF_DRV(EXYNOS_VIDI_CONNECTION,
 			vidi_connection_ioctl, DRM_UNLOCKED | DRM_AUTH),
 
@@ -292,8 +315,14 @@ static struct drm_ioctl_desc exynos_ioctls[] = {
 	DRM_IOCTL_DEF_DRV(EXYNOS_G2D_EXEC,
 			exynos_g2d_exec_ioctl, DRM_UNLOCKED | DRM_AUTH),
 
-	DRM_IOCTL_DEF_DRV(EXYNOS_ROTATOR_EXEC,
-			exynos_drm_rotator_exec_ioctl, DRM_UNLOCKED | DRM_AUTH),
+	DRM_IOCTL_DEF_DRV(EXYNOS_IPP_GET_PROPERTY,
+			exynos_drm_ipp_get_property, DRM_UNLOCKED | DRM_AUTH),
+	DRM_IOCTL_DEF_DRV(EXYNOS_IPP_SET_PROPERTY,
+			exynos_drm_ipp_set_property, DRM_UNLOCKED | DRM_AUTH),
+	DRM_IOCTL_DEF_DRV(EXYNOS_IPP_BUF,
+			exynos_drm_ipp_buf, DRM_UNLOCKED | DRM_AUTH),
+	DRM_IOCTL_DEF_DRV(EXYNOS_IPP_CTRL,
+			exynos_drm_ipp_ctrl, DRM_UNLOCKED | DRM_AUTH),
 };
 
 static const struct file_operations exynos_drm_driver_fops = {
@@ -307,8 +336,8 @@ static const struct file_operations exynos_drm_driver_fops = {
 };
 
 static struct drm_driver exynos_drm_driver = {
-	.driver_features	= DRIVER_HAVE_IRQ | DRIVER_BUS_PLATFORM |
-				  DRIVER_MODESET | DRIVER_GEM | DRIVER_PRIME,
+	.driver_features	= DRIVER_HAVE_IRQ | DRIVER_MODESET |
+					DRIVER_GEM | DRIVER_PRIME,
 	.load			= exynos_drm_load,
 	.unload			= exynos_drm_unload,
 	.open			= exynos_drm_open,
@@ -407,6 +436,24 @@ static int __init exynos_drm_init(void)
 		goto out_rotator;
 #endif
 
+#ifdef CONFIG_DRM_EXYNOS_FIMC
+	ret = platform_driver_register(&fimc_driver);
+	if (ret < 0)
+		goto out_fimc;
+#endif
+
+#ifdef CONFIG_DRM_EXYNOS_GSC
+	ret = platform_driver_register(&gsc_driver);
+	if (ret < 0)
+		goto out_gsc;
+#endif
+
+#ifdef CONFIG_DRM_EXYNOS_IPP
+	ret = platform_driver_register(&ipp_driver);
+	if (ret < 0)
+		goto out_ipp;
+#endif
+
 	ret = platform_driver_register(&exynos_drm_platform_driver);
 	if (ret < 0)
 		goto out;
@@ -414,6 +461,21 @@ static int __init exynos_drm_init(void)
 	return 0;
 
 out:
+#ifdef CONFIG_DRM_EXYNOS_IPP
+	platform_driver_unregister(&ipp_driver);
+out_ipp:
+#endif
+
+#ifdef CONFIG_DRM_EXYNOS_GSC
+	platform_driver_unregister(&gsc_driver);
+out_gsc:
+#endif
+
+#ifdef CONFIG_DRM_EXYNOS_FIMC
+	platform_driver_unregister(&fimc_driver);
+out_fimc:
+#endif
+
 #ifdef CONFIG_DRM_EXYNOS_ROTATOR
 	platform_driver_unregister(&rotator_driver);
 out_rotator:
@@ -450,6 +512,18 @@ static void __exit exynos_drm_exit(void)
 	DRM_DEBUG_DRIVER("%s\n", __FILE__);
 
 	platform_driver_unregister(&exynos_drm_platform_driver);
+
+#ifdef CONFIG_DRM_EXYNOS_IPP
+	platform_driver_unregister(&ipp_driver);
+#endif
+
+#ifdef CONFIG_DRM_EXYNOS_GSC
+	platform_driver_unregister(&gsc_driver);
+#endif
+
+#ifdef CONFIG_DRM_EXYNOS_FIMC
+	platform_driver_unregister(&fimc_driver);
+#endif
 
 #ifdef CONFIG_DRM_EXYNOS_ROTATOR
 	platform_driver_unregister(&rotator_driver);

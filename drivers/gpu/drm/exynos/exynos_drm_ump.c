@@ -115,13 +115,6 @@ static int exynos_drm_ump_add_buffer(void *obj,
 static void exynos_drm_ump_release_buffer(unsigned int handle)
 {
 	DRM_DEBUG_KMS("%s\n", __FILE__);
-
-	if (!handle) {
-		DRM_DEBUG_KMS("invalid ump handle.\n");
-		return;
-	}
-
-	ump_dd_reference_release((ump_dd_handle)handle);
 }
 
 static struct exynos_drm_private_cb ump_callback = {
