@@ -182,6 +182,7 @@ static inline void debug_rwsemaphore_up_log(struct rw_semaphore *sem)
 enum sec_debug_aux_log_idx {
 	SEC_DEBUG_AUXLOG_CPU_BUS_CLOCK_CHANGE,
 	SEC_DEBUG_AUXLOG_LOGBUF_LOCK_CHANGE,
+	SEC_DEBUG_AUXLOG_DVFS_LOCK_CHANGE,
 	SEC_DEBUG_AUXLOG_ITEM_MAX,
 };
 
@@ -189,6 +190,10 @@ enum sec_debug_aux_log_idx {
 extern void sec_debug_aux_log(int idx, char *fmt, ...);
 #else
 #define sec_debug_aux_log(idx, ...) do { } while (0)
+#endif
+
+#if defined(CONFIG_MACH_Q1_BD)
+extern int sec_debug_panic_handler_safe(void *buf);
 #endif
 
 extern void read_lcd_register(void);

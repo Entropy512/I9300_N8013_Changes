@@ -24,6 +24,11 @@
 #include <mach/sec_thermistor.h>
 #endif
 
+#if defined(CONFIG_MACH_C1_KOR_SKT) || defined(CONFIG_MACH_C1_KOR_KT) || \
+	defined(CONFIG_MACH_C1_KOR_LGT)
+extern int siopLevellimit;
+#endif
+
 #ifdef CONFIG_S3C_ADC
 #if defined(CONFIG_MACH_M0) || defined(CONFIG_MACH_P4NOTE)
 static struct adc_table_data ap_adc_temper_table_battery[] = {
@@ -130,7 +135,6 @@ static struct adc_table_data ap_adc_temper_table_battery[] = {
 	{ 1856, -200 },
 };
 #elif defined(CONFIG_MACH_C1)
-#if defined(CONFIG_TARGET_LOCALE_KOR)
 static struct adc_table_data ap_adc_temper_table_battery[] = {
 	{  178,	 800 },
 	{  186,	 790 },
@@ -234,20 +238,89 @@ static struct adc_table_data ap_adc_temper_table_battery[] = {
 	{ 1805, -190 },
 	{ 1824, -200 },
 };
-#else
+#elif defined(CONFIG_MACH_GC1)/*Sample # 3*/
 static struct adc_table_data ap_adc_temper_table_battery[] = {
-	{ 305,  650 },
-	{ 566,  430 },
-	{ 1494,   0 },
-	{ 1571, -50 },
-};
-#endif
-#elif defined(CONFIG_MACH_S2PLUS)
-static struct adc_table_data ap_adc_temper_table_battery[] = {
-	{ 305,  650 },
-	{ 566,  430 },
-	{ 1494,   0 },
-	{ 1571, -50 },
+	{  250,	 700 },
+	{  259,	 690 },
+	{  270,	 680 },
+	{  279,	 670 },
+	{  289,	 660 },
+	{  297,	 650 },
+	{  312,	 640 },
+	{  314,	 630 },
+	{  324,	 620 },
+	{  336,	 610 },
+	{  344,	 600 },
+	{  358,	 590 },
+	{  369,	 580 },
+	{  378,	 570 },
+	{  390,	 560 },
+	{  405,	 550 },
+	{  419,	 540 },
+	{  433,	 530 },
+	{  447,	 520 },
+	{  464,	 510 },
+	{  471,	 500 },
+	{  485,	 490 },
+	{  510,	 480 },
+	{  515,	 470 },
+	{  537,	 460 },
+	{  552,	 450 },
+	{  577,	 440 },
+	{  591,	 430 },
+	{  606,	 420 },
+	{  621,	 410 },
+	{  636,	 400 },
+	{  655,	 390 },
+	{  677,	 380 },
+	{  711,	 370 },
+	{  727,	 360 },
+	{  730,	 350 },
+	{  755,	 340 },
+	{  776,	 330 },
+	{  795,	 320 },
+	{  819,	 310 },
+	{  832,	 300 },
+	{  855,	 290 },
+	{  883,	 280 },
+	{  895,	 270 },
+	{  939,	 260 },
+	{  946,	 250 },
+	{  958,	 240 },
+	{  974,	 230 },
+	{ 986,	 220 },
+	{ 1023,	 210 },
+	{ 1055,	 200 },
+	{ 1065,	 190 },
+	{ 1118,	 180 },
+	{ 1147,	 170 },
+	{ 1171,	 160 },
+	{ 1190,	 150 },
+	{ 1220,	 140 },
+	{ 1224,	 130 },
+	{ 1251,	 120 },
+	{ 1271,	 110 },
+	{ 1316,	 100 },
+	{ 1325,	  90 },
+	{ 1333,	  80 },
+	{ 1365,	  70 },
+	{ 1382,	  60 },
+	{ 1404,	  50 },
+	{ 1445,	  40 },
+	{ 1461,	  30 },
+	{ 1469,	  20 },
+	{ 1492,	  10 },
+	{ 1518,	   0 },
+	{ 1552,	 -10 },
+	{ 1560,	 -20 },
+	{ 1588,	 -30 },
+	{ 1592,	 -40 },
+	{ 1613,	 -50 },
+	{ 1632,	 -60 },
+	{ 1647,	 -70 },
+	{ 1661,	-80 },
+	{ 1685,	-90 },
+	{ 1692,	-100 },
 };
 #else	/* sample */
 static struct adc_table_data ap_adc_temper_table_battery[] = {
@@ -377,24 +450,24 @@ static int get_midas_siop_level(int temp)
 #if defined(CONFIG_MACH_C1_KOR_SKT) || defined(CONFIG_MACH_C1_KOR_KT) || \
 	defined(CONFIG_MACH_C1_KOR_LGT)
 	if (temp > prev_temp) {
-		if (temp >= 490)
+		if (temp >= 540)
 			level = 4;
-		else if (temp >= 480)
+		else if (temp >= 530)
 			level = 3;
-		else if (temp >= 450)
+		else if (temp >= 480)
 			level = 2;
-		else if (temp >= 420)
+		else if (temp >= 440)
 			level = 1;
 		else
 			level = 0;
 	} else {
-		if (temp < 400)
+		if (temp < 410)
 			level = 0;
-		else if (temp < 420)
+		else if (temp < 440)
 			level = 1;
-		else if (temp < 450)
-			level = 2;
 		else if (temp < 480)
+			level = 2;
+		else if (temp < 530)
 			level = 3;
 		else
 			level = 4;
@@ -402,6 +475,10 @@ static int get_midas_siop_level(int temp)
 		if (level > prev_level)
 			level = prev_level;
 	}
+
+	if (siopLevellimit != 0 && level > siopLevellimit)
+		level = siopLevellimit;
+
 #elif defined(CONFIG_MACH_P4NOTE)
 	if (temp > prev_temp) {
 		if (temp >= 620)
@@ -429,6 +506,34 @@ static int get_midas_siop_level(int temp)
 		if (level > prev_level)
 			level = prev_level;
 	}
+#elif defined(CONFIG_MACH_T0)
+	if (temp > prev_temp) {
+		if (temp >= 540)
+			level = 4;
+		else if (temp >= 530)
+			level = 3;
+		else if (temp >= 480)
+			level = 2;
+		else if (temp >= 440)
+			level = 1;
+		else
+			level = 0;
+	} else {
+		if (temp < 410)
+			level = 0;
+		else if (temp < 440)
+			level = 1;
+		else if (temp < 480)
+			level = 2;
+		else if (temp < 530)
+			level = 3;
+		else
+			level = 4;
+
+		if (level > prev_level)
+			level = prev_level;
+	}
+	level = 0; /* This line disables SIOP */
 #else
 	if (temp > prev_temp) {
 		if (temp >= 540)

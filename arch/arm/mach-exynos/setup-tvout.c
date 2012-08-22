@@ -39,7 +39,7 @@ void s5p_int_src_hdmi_hpd(struct platform_device *pdev)
 {
 	printk(KERN_INFO "%s()\n", __func__);
 	s3c_gpio_cfgpin(GPIO_HDMI_HPD, S3C_GPIO_SFN(0x3));
-	s3c_gpio_setpull(GPIO_HDMI_HPD, S3C_GPIO_PULL_NONE);
+	s3c_gpio_setpull(GPIO_HDMI_HPD, S3C_GPIO_PULL_DOWN);
 }
 
 void s5p_int_src_ext_hpd(struct platform_device *pdev)

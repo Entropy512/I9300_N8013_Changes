@@ -370,7 +370,11 @@ struct max77686_platform_data exynos4_max77686_info = {
 
 void midas_power_set_muic_pdata(void *pdata, int gpio)
 {
-	gpio_request(gpio, "AP_PMIC_IRQ");
+	int err;
+
+	err = gpio_request(gpio, "AP_PMIC_IRQ");
+	if (err)
+		pr_warn("failed to request AP_PMIC_IRQ\n");
 	s3c_gpio_cfgpin(gpio, S3C_GPIO_SFN(0xf));
 	s3c_gpio_setpull(gpio, S3C_GPIO_PULL_NONE);
 }
@@ -777,6 +781,7 @@ struct s5m_platform_data exynos4_s5m8767_info = {
 	.buck_ds[1]		= EXYNOS4_GPF3(2),
 	.buck_ds[2]		= EXYNOS4_GPF3(3),
 
+	.buck1_init		= 1000000,
 	.buck2_init		= 1100000,
 	.buck3_init		= 1000000,
 	.buck4_init		= 1000000,

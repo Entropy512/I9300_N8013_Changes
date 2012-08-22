@@ -52,5 +52,6 @@ int mdm_common_modem_remove(struct platform_device *pdev);
 void mdm_common_modem_shutdown(struct platform_device *pdev);
 void mdm_common_set_debug_state(int value);
 
+void notify_modem_fatal(void);
 #endif
 

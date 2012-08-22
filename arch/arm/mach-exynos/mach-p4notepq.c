@@ -159,6 +159,10 @@ struct s3cfb_extdsp_lcd {
 
 #include "board-mobile.h"
 
+#ifdef CONFIG_IR_REMOCON_MC96
+#include <linux/ir_remote_con_mc96.h>
+#endif
+
 extern int s6c1372_panel_gpio_init(void);
 
 /* cable state */
@@ -860,10 +864,13 @@ struct platform_device s3c_device_i2c14 = {
 static struct max17042_platform_data max17042_pdata = {
 	.sdi_capacity = 0x3730,
 	.sdi_vfcapacity = 0x4996,
+	.sdi_low_bat_comp_start_vol = 3600,
 	.atl_capacity = 0x3022,
 	.atl_vfcapacity = 0x4024,
-	.sdi_low_bat_comp_start_vol = 3600,
 	.atl_low_bat_comp_start_vol = 3450,
+	.byd_capacity = 0x36B0,
+	.byd_vfcapacity = 0x48EA,
+	.byd_low_bat_comp_start_vol = 3600,
 	.fuel_alert_line = GPIO_FUEL_ALERT,
 	.check_jig_status = check_jig_on
 };
@@ -989,6 +996,83 @@ static struct i2c_board_info i2c_devs21_emul[] __initdata = {
 	},
 #endif
 };
+
+
+/* I2C22 */
+#ifdef CONFIG_IR_REMOCON_MC96
+static void irda_wake_en(bool onoff)
+{
+	gpio_direction_output(GPIO_IRDA_WAKE, onoff);
+	printk(KERN_ERR "%s: irda_wake_en : %d\n", __func__, onoff);
+}
+
+static void irda_device_init(void)
+{
+	int ret;
+
+	printk(KERN_ERR "%s called!\n", __func__);
+
+	ret = gpio_request(GPIO_IRDA_WAKE, "irda_wake");
+	if (ret) {
+		printk(KERN_ERR "%s: gpio_request fail[%d], ret = %d\n",
+				__func__, GPIO_IRDA_WAKE, ret);
+		return;
+	}
+	gpio_direction_output(GPIO_IRDA_WAKE, 0);
+
+	return;
+}
+
+static int vled_ic_onoff;
+
+static void irda_vdd_onoff(bool onoff)
+{
+	int ret = 0;
+	static struct regulator *vled_ic;
+
+	if (onoff) {
+		vled_ic = regulator_get(NULL, "vled_ic_1.9v");
+		if (IS_ERR(vled_ic)) {
+			pr_err("could not get regulator vled_ic_1.9v\n");
+			return;
+		}
+		regulator_enable(vled_ic);
+		vled_ic_onoff = 1;
+	} else if (vled_ic_onoff == 1) {
+		regulator_force_disable(vled_ic);
+		regulator_put(vled_ic);
+		vled_ic_onoff = 0;
+	}
+}
+
+static struct i2c_gpio_platform_data gpio_i2c_data22 = {
+	.sda_pin = GPIO_IRDA_SDA,
+	.scl_pin = GPIO_IRDA_SCL,
+	.udelay = 2,
+	.sda_is_open_drain = 0,
+	.scl_is_open_drain = 0,
+	.scl_is_output_only = 0,
+};
+
+struct platform_device s3c_device_i2c22 = {
+	.name = "i2c-gpio",
+	.id = 22,
+	.dev.platform_data = &gpio_i2c_data22,
+};
+
+static struct mc96_platform_data mc96_pdata = {
+	.ir_remote_init = irda_device_init,
+	.ir_wake_en = irda_wake_en,
+	.ir_vdd_onoff = irda_vdd_onoff,
+};
+
+static struct i2c_board_info i2c_devs22_emul[] __initdata = {
+	{
+		I2C_BOARD_INFO("mc96", (0XA0 >> 1)),
+		.platform_data = &mc96_pdata,
+	},
+};
+#endif
 
 #ifdef CONFIG_I2C_GPIO
 #ifdef CONFIG_MOTOR_DRV_ISA1200
@@ -1118,6 +1202,9 @@ static void  sec_charger_cb(int set_cable_type)
 		cable_state_to_usb = false;
 		is_cable_attached = true;
 		is_usb_lpm_enter = true;
+		usb_switch_lock();
+		usb_switch_set_path(USB_PATH_TA);
+		usb_switch_unlock();
 		break;
 	case CHARGER_BATTERY:
 	case CHARGER_DISCHARGE:
@@ -1126,6 +1213,9 @@ static void  sec_charger_cb(int set_cable_type)
 		cable_state_to_usb = false;
 		is_cable_attached = false;
 		is_usb_lpm_enter = true;
+		usb_switch_lock();
+		usb_switch_clr_path(USB_PATH_TA);
+		usb_switch_unlock();
 		break;
 	}
 	pr_info("%s:cable_type=%d,tsp(%d),usb(%d),attached(%d),usblpm(%d)\n",
@@ -1136,8 +1226,19 @@ static void  sec_charger_cb(int set_cable_type)
 	synaptics_ts_charger_infom(is_cable_attached);
 #endif
 
+#if defined(CONFIG_TOUCHSCREEN_ATMEL_MXT1664S)
+	ts_charger_infom(is_cable_attached);
+#endif
+
 /* Send charger state to px-switch. px-switch needs cable type what USB or not */
 	set_usb_connection_state(!is_usb_lpm_enter);
+
+#ifdef CONFIG_TARGET_LOCALE_KOR
+	if (px_switch_get_usb_lock_state()) {
+		pr_info("%s: usb locked by mdm\n", __func__);
+		return;
+	}
+#endif
 
 /* Send charger state to USB. USB needs cable type what USB data or not */
 	if (gadget) {
@@ -1170,6 +1271,11 @@ static struct sec_battery_platform_data sec_battery_platform = {
 #if defined(CONFIG_TARGET_LOCALE_USA)
 	.temp_high_threshold = 50000,	/* 50c */
 	.temp_high_recovery = 42000,	/* 42c */
+	.temp_low_recovery = 0,			/* 0c */
+	.temp_low_threshold = -5000,	/* -5c */
+#elif defined(CONFIG_TARGET_LOCALE_KOR)
+	.temp_high_threshold = 61400,	/* 65c */
+	.temp_high_recovery = 43500,	/* 42c */
 	.temp_low_recovery = 0,			/* 0c */
 	.temp_low_threshold = -5000,	/* -5c */
 #else
@@ -1478,7 +1584,7 @@ static struct platform_device exynos4_busfreq = {
 	.name = "exynos-busfreq",
 };
 
-#if defined(CONFIG_SENSORS_BH1721)
+#if defined(CONFIG_SENSORS_BH1721) || defined(CONFIG_SENSORS_AL3201)
 static struct i2c_gpio_platform_data i2c9_platdata = {
 	.sda_pin	= GPIO_PS_ALS_SDA_28V,
 	.scl_pin	= GPIO_PS_ALS_SCL_28V,
@@ -1530,7 +1636,7 @@ static struct platform_device s3c_device_i2c11 = {
 #endif
 
 /* IR_LED */
-#ifdef CONFIG_IR_REMOCON
+#ifdef CONFIG_IR_REMOCON_GPIO
 
 static struct platform_device ir_remote_device = {
 	.name = "ir_rc",
@@ -1549,7 +1655,87 @@ static void ir_rc_init_hw(void)
 #endif
 /* IR_LED */
 
+#ifdef CONFIG_SEC_WATCHDOG_RESET
+static struct platform_device watchdog_reset_device = {
+	.name = "watchdog-reset",
+	.id = -1,
+};
+#endif
+
+#ifdef CONFIG_CORESIGHT_ETM
+
+#define CORESIGHT_PHYS_BASE		0x10880000
+#define CORESIGHT_ETB_PHYS_BASE		(CORESIGHT_PHYS_BASE + 0x1000)
+#define CORESIGHT_TPIU_PHYS_BASE	(CORESIGHT_PHYS_BASE + 0x3000)
+#define CORESIGHT_FUNNEL_PHYS_BASE	(CORESIGHT_PHYS_BASE + 0x4000)
+#define CORESIGHT_ETM_PHYS_BASE		(CORESIGHT_PHYS_BASE + 0x1C000)
+
+static struct resource coresight_etb_resources[] = {
+	{
+		.start = CORESIGHT_ETB_PHYS_BASE,
+		.end   = CORESIGHT_ETB_PHYS_BASE + SZ_4K - 1,
+		.flags = IORESOURCE_MEM,
+	},
+};
+
+struct platform_device coresight_etb_device = {
+	.name          = "coresight_etb",
+	.id            = -1,
+	.num_resources = ARRAY_SIZE(coresight_etb_resources),
+	.resource      = coresight_etb_resources,
+};
+
+static struct resource coresight_tpiu_resources[] = {
+	{
+		.start = CORESIGHT_TPIU_PHYS_BASE,
+		.end   = CORESIGHT_TPIU_PHYS_BASE + SZ_4K - 1,
+		.flags = IORESOURCE_MEM,
+	},
+};
+
+struct platform_device coresight_tpiu_device = {
+	.name          = "coresight_tpiu",
+	.id            = -1,
+	.num_resources = ARRAY_SIZE(coresight_tpiu_resources),
+	.resource      = coresight_tpiu_resources,
+};
+
+static struct resource coresight_funnel_resources[] = {
+	{
+		.start = CORESIGHT_FUNNEL_PHYS_BASE,
+		.end   = CORESIGHT_FUNNEL_PHYS_BASE + SZ_4K - 1,
+		.flags = IORESOURCE_MEM,
+	},
+};
+
+struct platform_device coresight_funnel_device = {
+	.name          = "coresight_funnel",
+	.id            = -1,
+	.num_resources = ARRAY_SIZE(coresight_funnel_resources),
+	.resource      = coresight_funnel_resources,
+};
+
+static struct resource coresight_etm_resources[] = {
+	{
+		.start = CORESIGHT_ETM_PHYS_BASE,
+		.end   = CORESIGHT_ETM_PHYS_BASE + (SZ_4K * 4) - 1,
+		.flags = IORESOURCE_MEM,
+	},
+};
+
+struct platform_device coresight_etm_device = {
+	.name          = "coresight_etm",
+	.id            = -1,
+	.num_resources = ARRAY_SIZE(coresight_etm_resources),
+	.resource      = coresight_etm_resources,
+};
+
+#endif
+
 static struct platform_device *midas_devices[] __initdata = {
+#ifdef CONFIG_SEC_WATCHDOG_RESET
+	&watchdog_reset_device,
+#endif
 #ifdef CONFIG_ANDROID_RAM_CONSOLE
 	&ram_console_device,
 #endif
@@ -1637,6 +1823,11 @@ static struct platform_device *midas_devices[] __initdata = {
 #ifdef CONFIG_LEDS_AN30259A
 	&s3c_device_i2c21,
 #endif
+
+#ifdef CONFIG_IR_REMOCON_MC96
+	&s3c_device_i2c22,
+#endif
+
 #if defined CONFIG_USB_EHCI_S5P && !defined CONFIG_LINK_DEVICE_HSIC
 	&s5p_device_ehci,
 #endif
@@ -1789,12 +1980,18 @@ static struct platform_device *midas_devices[] __initdata = {
 	&sec_keyboard,
 #endif
 #endif
-#if defined(CONFIG_IR_REMOCON)
+#if defined(CONFIG_IR_REMOCON_GPIO)
 /* IR_LED */
 	&ir_remote_device,
 /* IR_LED */
 #endif
 
+#ifdef CONFIG_CORESIGHT_ETM
+	&coresight_etb_device,
+	&coresight_tpiu_device,
+	&coresight_funnel_device,
+	&coresight_etm_device,
+#endif
 };
 
 #ifdef CONFIG_EXYNOS4_SETUP_THERMAL
@@ -1817,7 +2014,7 @@ struct s5p_platform_tmu midas_tmu_data __initdata = {
 		.limit_2nd_throttle  = 200000, /* 200MHz in KHz order */
 	},
 	.temp_compensate = {
-		.arm_volt = 900000, /* vdd_arm in uV for temp compensation */
+		.arm_volt = 925000, /* vdd_arm in uV for temp compensation */
 		.bus_volt = 900000, /* vdd_bus in uV for temp compensation */
 		.g3d_volt = 900000, /* vdd_g3d in uV for temp compensation */
 	},
@@ -1866,6 +2063,9 @@ static void __init exynos4_reserve_mem(void)
 		{
 			.name = "fimd",
 			.size = CONFIG_VIDEO_SAMSUNG_MEMSIZE_FIMD * SZ_1K,
+			{
+				.alignment = 1 << 20,
+			},
 			.start = 0
 		},
 #endif
@@ -2266,6 +2466,11 @@ static void __init midas_machine_init(void)
 				ARRAY_SIZE(i2c_devs21_emul));
 #endif
 
+#ifdef CONFIG_IR_REMOCON_MC96
+	i2c_register_board_info(22, i2c_devs22_emul,
+				ARRAY_SIZE(i2c_devs22_emul));
+#endif
+
 #if defined(GPIO_OLED_DET)
 	gpio_request(GPIO_OLED_DET, "OLED_DET");
 	s5p_register_gpio_interrupt(GPIO_OLED_DET);
@@ -2389,7 +2594,7 @@ static void __init midas_machine_init(void)
 		platform_device_register(&s3c_device_i2c5);
 #endif
 
-#if defined(CONFIG_SENSORS_BH1721)
+#if defined(CONFIG_SENSORS_BH1721) || defined(CONFIG_SENSORS_AL3201)
 	platform_device_register(&s3c_device_i2c9);
 #endif
 
@@ -2506,7 +2711,7 @@ static void __init midas_machine_init(void)
 	__raw_writel((__raw_readl(EXYNOS4_CLKDIV_FSYS1) & 0xfff0fff0)
 		     | 0x80008, EXYNOS4_CLKDIV_FSYS1);
 
-#if defined(CONFIG_IR_REMOCON)
+#if defined(CONFIG_IR_REMOCON_GPIO)
 /* IR_LED */
 	ir_rc_init_hw();
 /* IR_LED */

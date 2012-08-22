@@ -184,8 +184,18 @@ static struct wm8994_drc_cfg drc_value[] = {
 		.regs[0] = 0x008c,
 		.regs[1] = 0x0253,
 		.regs[2] = 0x0028,
-		.regs[3] = 0x028a,
+		.regs[3] = 0x028c,
 		.regs[4] = 0x0000,
+	},
+#endif
+#if defined(CONFIG_MACH_P4NOTE)
+{
+		.name = "cam rec DRC",
+		.regs[0] = 0x019B,
+		.regs[1] = 0x0844,
+		.regs[2] = 0x0408,
+		.regs[3] = 0x0108,
+		.regs[4] = 0x0120,
 	},
 #endif
 };
@@ -222,7 +232,13 @@ static struct wm8994_pdata wm1811_pdata = {
 	.jd_ext_cap = 1,
 
 	/* Regulated mode at highest output voltage */
+#ifdef CONFIG_TARGET_LOCALE_KOR
+	.micbias = {0x22, 0x22},
+#elif defined(CONFIG_MACH_C1_USA_ATT)
+	.micbias = {0x2f, 0x29},
+#else
 	.micbias = {0x2f, 0x27},
+#endif
 
 	.micd_lvl_sel = 0xFF,
 
@@ -238,7 +254,9 @@ static struct wm8994_pdata wm1811_pdata = {
 #endif
 #if defined(CONFIG_MACH_M0) || defined(CONFIG_MACH_C1_KOR_SKT) || \
 	defined(CONFIG_MACH_C1_KOR_KT) || defined(CONFIG_MACH_C1_KOR_LGT) || \
-	defined(CONFIG_MACH_P4NOTE) || defined(CONFIG_MACH_GC1)
+	defined(CONFIG_MACH_P4NOTE) || defined(CONFIG_MACH_GC1) || \
+	defined(CONFIG_MACH_C1_USA_ATT) || defined(CONFIG_MACH_T0) || \
+	defined(CONFIG_MACH_M3)
 	.lineout2fb = 0,
 #else
 	.lineout2fb = 1,
@@ -277,7 +295,7 @@ static struct i2c_board_info i2c_2mic[] __initdata = {
 	},
 };
 
-#if defined(CONFIG_MACH_C1_KOR_LGT) || defined(CONFIG_MACH_C1VZW)
+#if defined(CONFIG_MACH_C1_KOR_LGT)
 static struct i2c_gpio_platform_data gpio_i2c_fm34 = {
 	.sda_pin = GPIO_FM34_SDA,
 	.scl_pin = GPIO_FM34_SCL,
@@ -307,7 +325,7 @@ static struct i2c_board_info i2c_2mic[] __initdata = {
 #endif
 
 static struct platform_device *midas_sound_devices[] __initdata = {
-#if defined(CONFIG_MACH_C1_KOR_LGT) || defined(CONFIG_MACH_C1VZW)
+#if defined(CONFIG_MACH_C1_KOR_LGT)
 #ifdef CONFIG_FM34_WE395
 	&s3c_device_fm34,
 #endif
@@ -334,6 +352,11 @@ void __init midas_sound_init(void)
 	SET_PLATDATA_CODEC(NULL);
 	i2c_register_board_info(I2C_NUM_CODEC, i2c_wm1811,
 					ARRAY_SIZE(i2c_wm1811));
+
+#elif defined(CONFIG_MACH_GC1)
+		SET_PLATDATA_CODEC(NULL);
+		i2c_register_board_info(I2C_NUM_CODEC, i2c_wm1811,
+						ARRAY_SIZE(i2c_wm1811));
 
 #else
 	if (system_rev != 3 && system_rev >= 0) {

@@ -58,12 +58,19 @@ static DEFINE_MUTEX(hsic_status_lock);
 
 static void mdm_peripheral_connect(struct mdm_modem_drv *mdm_drv)
 {
-	pr_err("%s\n", __func__);
+	struct mdm_platform_data *pdata;
+
+	pr_info("%s\n", __func__);
+
 	mutex_lock(&hsic_status_lock);
 	if (hsic_peripheral_status)
 		goto out;
-	if (mdm_drv->pdata->peripheral_platform_device)
-		platform_device_add(mdm_drv->pdata->peripheral_platform_device);
+
+	pdata = mdm_drv->pdata;
+	if (pdata->peripheral_platform_device_ohci)
+		platform_device_add(pdata->peripheral_platform_device_ohci);
+	if (pdata->peripheral_platform_device_ehci)
+		platform_device_add(pdata->peripheral_platform_device_ehci);
 	hsic_peripheral_status = 1;
 out:
 	mutex_unlock(&hsic_status_lock);
@@ -73,12 +80,19 @@ out:
 
 static void mdm_peripheral_disconnect(struct mdm_modem_drv *mdm_drv)
 {
-	pr_err("%s\n", __func__);
+	struct mdm_platform_data *pdata;
+
+	pr_info("%s\n", __func__);
+
 	mutex_lock(&hsic_status_lock);
 	if (!hsic_peripheral_status)
 		goto out;
-	if (mdm_drv->pdata->peripheral_platform_device)
-		platform_device_del(mdm_drv->pdata->peripheral_platform_device);
+
+	pdata = mdm_drv->pdata;
+	if (pdata->peripheral_platform_device_ehci)
+		platform_device_del(pdata->peripheral_platform_device_ehci);
+	if (pdata->peripheral_platform_device_ohci)
+		platform_device_del(pdata->peripheral_platform_device_ohci);
 	hsic_peripheral_status = 0;
 out:
 	mutex_unlock(&hsic_status_lock);
@@ -132,8 +146,6 @@ static void power_on_mdm(struct mdm_modem_drv *mdm_drv)
 	gpio_direction_output(mdm_drv->ap2mdm_status_gpio, 1);
 #endif
 	mdm_peripheral_connect(mdm_drv);
-
-	msleep(200);
 }
 
 static void power_down_mdm(struct mdm_modem_drv *mdm_drv)
@@ -198,19 +210,9 @@ static struct mdm_ops mdm_cb = {
 #endif
 };
 
-/* temprary wakelock, remove when L3 state implemented */
-#ifdef CONFIG_ARCH_EXYNOS
-static struct wake_lock mdm_wake;
-#endif
-
 static int __init mdm_modem_probe(struct platform_device *pdev)
 {
-	pr_err("%s\n", __func__);
-/* temprary wakelock, remove when L3 state implemented */
-#ifdef CONFIG_ARCH_EXYNOS
-	wake_lock_init(&mdm_wake, WAKE_LOCK_SUSPEND, "mdm_wake");
-	wake_lock(&mdm_wake);
-#endif
+	pr_info("%s\n", __func__);
 	return mdm_common_create(pdev, &mdm_cb);
 }
 

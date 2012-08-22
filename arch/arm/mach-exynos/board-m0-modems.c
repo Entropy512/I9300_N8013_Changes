@@ -370,22 +370,6 @@ static void umts_modem_cfg_gpio(void)
 		irq_set_irq_type(gpio_to_irq(gpio_phone_active),
 							IRQ_TYPE_LEVEL_HIGH);
 	/* set low unused gpios between AP and CP */
-	err = gpio_request(GPIO_FLM_RXD, "FLM_RXD");
-	if (err)
-		pr_err(LOG_TAG "fail to request gpio %s : %d\n", "FLM_RXD",
-		err);
-	else {
-		gpio_direction_output(GPIO_FLM_RXD, 0);
-		s3c_gpio_setpull(GPIO_FLM_RXD, S3C_GPIO_PULL_NONE);
-	}
-	err = gpio_request(GPIO_FLM_TXD, "FLM_TXD");
-	if (err)
-		pr_err(LOG_TAG "fail to request gpio %s : %d\n", "FLM_TXD",
-		err);
-	else {
-		gpio_direction_output(GPIO_FLM_TXD, 0);
-		s3c_gpio_setpull(GPIO_FLM_TXD, S3C_GPIO_PULL_NONE);
-	}
 	err = gpio_request(GPIO_SUSPEND_REQUEST, "SUS_REQ");
 	if (err)
 		pr_err(LOG_TAG "fail to request gpio %s : %d\n", "SUS_REQ",
@@ -394,15 +378,6 @@ static void umts_modem_cfg_gpio(void)
 		gpio_direction_output(GPIO_SUSPEND_REQUEST, 0);
 		s3c_gpio_setpull(GPIO_SUSPEND_REQUEST, S3C_GPIO_PULL_NONE);
 	}
-	err = gpio_request(GPIO_GPS_CNTL, "GPS_CNTL");
-	if (err)
-		pr_err(LOG_TAG "fail to request gpio %s : %d\n", "GPS_CNTL",
-		err);
-	else {
-		gpio_direction_output(GPIO_GPS_CNTL, 0);
-		s3c_gpio_setpull(GPIO_GPS_CNTL, S3C_GPIO_PULL_NONE);
-	}
-
 	pr_info(LOG_TAG "umts_modem_cfg_gpio done\n");
 }
 
