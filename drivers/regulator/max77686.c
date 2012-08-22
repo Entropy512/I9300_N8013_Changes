@@ -467,8 +467,10 @@ static int max77686_set_voltage(struct regulator_dev *rdev,
 	org = (org & mask) >> shift;
 
 #if defined(CONFIG_MACH_M0) || defined(CONFIG_MACH_C1) || \
-	defined(CONFIG_MACH_C1VZW) || defined(CONFIG_MACH_P4NOTE) || \
-	defined(CONFIG_MACH_GC1)
+	defined(CONFIG_MACH_M3) || \
+	defined(CONFIG_MACH_P4NOTE) || \
+	defined(CONFIG_MACH_GC1) || defined(CONFIG_MACH_T0) || \
+	defined(CONFIG_MACH_GRANDE) || defined(CONFIG_MACH_IRON)
 	/* Test code for HDMI debug */
 	if (!gpio_get_value(GPIO_HDMI_EN))
 #endif
@@ -649,7 +651,7 @@ static __devinit int max77686_pmic_probe(struct platform_device *pdev)
 	struct regulator_dev **rdev;
 	struct max77686_data *max77686;
 	struct i2c_client *i2c;
-	int i, ret, size;
+	int i, ret, size, err;
 	u8 data = 0;
 
 	printk(PMIC_DEBUG "%s\n", __func__);
@@ -700,7 +702,11 @@ static __devinit int max77686_pmic_probe(struct platform_device *pdev)
 		if (gpio_is_valid(pdata->buck234_gpio_dvs[i].gpio)) {
 			max77686->buck234_gpios_dvs[i] =
 				pdata->buck234_gpio_dvs[i].gpio;
-			gpio_request(pdata->buck234_gpio_dvs[i].gpio, buf);
+			err = gpio_request(
+				pdata->buck234_gpio_dvs[i].gpio, buf);
+			if (err)
+				pr_warn(
+				"failed to request MAX77686 DVS%d\n", i);
 			gpio_direction_output(pdata->buck234_gpio_dvs[i].gpio,
 				pdata->buck234_gpio_dvs[i].data);
 		} else {
@@ -714,7 +720,11 @@ static __devinit int max77686_pmic_probe(struct platform_device *pdev)
 			int data = (max77686->device_id <= MAX77686_DEVICE_PASS1) ? 1 : 0;
 			max77686->buck234_gpios_selb[i] =
 				pdata->buck234_gpio_selb[i];
-			gpio_request(pdata->buck234_gpio_selb[i], buf);
+			err = gpio_request(
+				pdata->buck234_gpio_selb[i], buf);
+			if (err)
+				pr_warn(
+				"failed to request MAX77686 SELB%d\n", i);
 			gpio_direction_output(pdata->buck234_gpio_selb[i], data);
 		} else {
 			dev_info(&pdev->dev, "GPIO %s ignored (%d)\n",
@@ -856,7 +866,11 @@ static int __init max77686_pmic_init(void)
 
 	return platform_driver_register(&max77686_pmic_driver);
 }
+#ifdef CONFIG_FAST_RESUME
+beforeresume_initcall(max77686_pmic_init);
+#else
 subsys_initcall(max77686_pmic_init);
+#endif
 
 static void __exit max77686_pmic_cleanup(void)
 {
