@@ -14,28 +14,31 @@
 
 #ifndef _LINUX_MMS_TOUCH_H
 #define _LINUX_MMS_TOUCH_H
-#define MELFAS_TS_NAME "melfas-ts"
+#define MELFAS_TS_NAME			"melfas-ts"
 
 struct melfas_tsi_platform_data {
-	int	max_x;
-	int	max_y;
+	int max_x;
+	int max_y;
 
-	bool	invert_x;
-	bool	invert_y;
+	bool invert_x;
+	bool invert_y;
 
-	int	gpio_int;
-	int	gpio_sda;
-	int	gpio_scl;
-	int	(*mux_fw_flash)(bool to_gpios);
-	int	(*power)(int on);
-	u8	*tsp_vendor;
-	u8	*tsp_ic;
-	int	tsp_tx;
-	int	tsp_rx;
-	int	fw_version;
-	const u8	*config_fw_version;
-	void	(*input_event)(void *data);
-	void	(*register_cb)(void *);
+	int gpio_int;
+	int gpio_sda;
+	int gpio_scl;
+	int (*mux_fw_flash) (bool to_gpios);
+	int (*power) (int on);
+	int (*is_vdd_on) (void);
+	const char *fw_name;
+	bool use_touchkey;
+	const u8 *touchkey_keycode;
+	const u8 *config_fw_version;
+#ifdef CONFIG_INPUT_FBSUSPEND
+	struct notifier_block fb_notif;
+#endif
+	void (*input_event) (void *data);
+	int (*lcd_type) (void);
+	void (*register_cb) (void *);
 };
 extern struct class *sec_class;
 void tsp_charger_infom(bool en);

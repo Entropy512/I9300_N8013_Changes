@@ -22,7 +22,12 @@
 #define NAMEBUF 12
 #define WACNAME "WAC_I2C_EMR"
 #define WACFLASH "WAC_I2C_FLASH"
+
+#ifdef CONFIG_EPEN_WACOM_G9PM
+#define WACOM_FW_SIZE 61440
+#else
 #define WACOM_FW_SIZE 32768
+#endif
 
 /*Wacom Command*/
 #define COM_COORD_NUM      7
@@ -57,55 +62,98 @@
 #define WACOM_DELAY_FOR_RST_RISING 200
 /* #define INIT_FIRMWARE_FLASH */
 
+#define WACOM_PDCT_WORK_AROUND
+
 /*PDCT Signal*/
 #define PDCT_NOSIGNAL 1
 #define PDCT_DETECT_PEN 0
-#define WACOM_PDCT_WORK_AROUND
+
+#define WACOM_PRESSURE_MAX 255
+
+/*Digitizer Type*/
+#define EPEN_DTYPE_B660	1
+#define EPEN_DTYPE_B713 2
 
 #if defined(CONFIG_MACH_P4NOTE) || defined(CONFIG_MACH_P4)
+#define WACOM_DVFS_LOCK_FREQ 800000
 #ifdef CONFIG_SEC_TOUCHSCREEN_DVFS_LOCK
 #define SEC_BUS_LOCK
 #endif
+#define BATTERY_SAVING_MODE
 #define WACOM_HAVE_RESET_CONTROL 0
 #define WACOM_POSX_MAX 21866
 #define WACOM_POSY_MAX 13730
 #define WACOM_POSX_OFFSET 170
 #define WACOM_POSY_OFFSET 170
 #define WACOM_IRQ_WORK_AROUND
+#define WACOM_PEN_DETECT
+#define WACOM_MAX_COORD_X WACOM_POSX_MAX
+#define WACOM_MAX_COORD_Y WACOM_POSY_MAX
+
 #elif defined(CONFIG_MACH_Q1_BD)
-#define BOARD_Q1C210
+
 #define COOR_WORK_AROUND
 #define WACOM_IMPORT_FW_ALGO
+#define WACOM_USE_OFFSET_TABLE
+#define WACOM_USE_AVERAGING
+#define WACOM_USE_TILT_OFFSET
+
 #define WACOM_SLEEP_WITH_PEN_SLP
 #define WACOM_HAVE_RESET_CONTROL 1
 #define CONFIG_SEC_TOUCHSCREEN_DVFS_LOCK
+#define WACOM_DVFS_LOCK_FREQ 500000
 
-#if defined(BOARD_P4ADOBE) && defined(COOR_WORK_AROUND)
-	#define COOR_WORK_AROUND_X_MAX		0x54C0
-	#define COOR_WORK_AROUND_Y_MAX		0x34F8
-	#define COOR_WORK_AROUND_PRESSURE_MAX	0xFF
-#elif (defined(BOARD_Q1OMAP4430) || defined(BOARD_Q1C210))\
-	&& defined(COOR_WORK_AROUND)
-	#define COOR_WORK_AROUND_X_MAX		0x2C80
-	#define COOR_WORK_AROUND_Y_MAX		0x1BD0
-	#define COOR_WORK_AROUND_PRESSURE_MAX	0xFF
-#endif
+#define COOR_WORK_AROUND_X_MAX		0x2C80
+#define COOR_WORK_AROUND_Y_MAX		0x1BD0
+#define COOR_WORK_AROUND_PRESSURE_MAX	0xFF
 
 #define WACOM_I2C_TRANSFER_STYLE
 #if !defined(WACOM_I2C_TRANSFER_STYLE)
 #define WACOM_I2C_RECV_SEND_STYLE
 #endif
 
-#ifdef CONFIG_MACH_Q1_BD
+#define WACOM_MAX_COORD_X 11392
+#define WACOM_MAX_COORD_Y 7120
+#define WACOM_MAX_PRESSURE 0xFF
+
 /* For Android origin */
-#define WACOM_POSX_MAX 7120
-#define WACOM_POSY_MAX 11392
-#define WACOM_PRESSURE_MAX 255
+#define WACOM_POSX_MAX WACOM_MAX_COORD_Y
+#define WACOM_POSY_MAX WACOM_MAX_COORD_X
 
 #define MAX_ROTATION	4
 #define MAX_HAND		2
-#endif	/* CONFIG_MACH_Q1_BD */
-#endif	/* !defined(WACOM_P4) */
+
+#elif defined(CONFIG_MACH_T0)
+
+#define WACOM_MAX_COORD_X 12288
+#define WACOM_MAX_COORD_Y 6912
+#define WACOM_MAX_PRESSURE 0xFF
+
+/* For Android origin */
+#define WACOM_POSX_MAX WACOM_MAX_COORD_Y
+#define WACOM_POSY_MAX WACOM_MAX_COORD_X
+
+#define COOR_WORK_AROUND
+#define WACOM_IMPORT_FW_ALGO
+#define WACOM_USE_OFFSET_TABLE
+#define WACOM_USE_AVERAGING
+#define WACOM_USE_TILT_OFFSET
+
+#define MAX_ROTATION	4
+#define MAX_HAND		2
+
+#define WACOM_PEN_DETECT
+
+/* origin offset */
+#define EPEN_B660_ORG_X 456
+#define EPEN_B660_ORG_Y 504
+
+#define EPEN_B713_ORG_X 676
+#define EPEN_B713_ORG_Y 724
+
+#define CONFIG_SEC_TOUCHSCREEN_DVFS_LOCK
+#define WACOM_DVFS_LOCK_FREQ 800000
+#endif
 
 #if !defined(WACOM_SLEEP_WITH_PEN_SLP)
 #define WACOM_SLEEP_WITH_PEN_LDO_EN
@@ -161,6 +209,9 @@ struct wacom_g5_platform_data {
 	int max_pressure;
 	int min_pressure;
 	int gpio_pendct;
+#ifdef WACOM_PEN_DETECT
+	int gpio_pen_insert;
+#endif
 	int (*init_platform_hw)(void);
 	int (*exit_platform_hw)(void);
 	int (*suspend_platform_hw)(void);
@@ -190,6 +241,17 @@ struct wacom_i2c {
 	int pen_pressed;
 	int side_pressed;
 	int tool;
+	u16 last_x;
+	u16 last_y;
+#ifdef WACOM_PEN_DETECT
+	struct delayed_work pen_insert_dwork;
+	bool pen_insert;
+	int gpio_pen_insert;
+#endif
+#ifdef WACOM_IMPORT_FW_ALGO
+	bool use_offset_table;
+#endif
+	bool checksum_result;
 	const char name[NAMEBUF];
 	struct wacom_features *wac_feature;
 	struct wacom_g5_platform_data *wac_pdata;
@@ -204,10 +266,17 @@ struct wacom_i2c {
 	unsigned int cpufreq_level;
 	bool dvfs_lock_status;
 	struct delayed_work dvfs_work;
-#if defined(CONFIG_MACH_P4NOTE)
 	struct device *bus_dev;
 #endif
+#ifdef CONFIG_MACH_P4NOTE
+	struct delayed_work query_work;
+	bool pen_type;
 #endif
+
+#ifdef BATTERY_SAVING_MODE
+	bool battery_saving_mode;
+#endif
+	bool power_enable;
 };
 
 #endif /* _LINUX_WACOM_I2C_H */
