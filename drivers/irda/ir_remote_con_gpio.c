@@ -82,14 +82,33 @@ static void ir_remocon_send(struct ir_remocon_data *data)
 	if (ret < 0)
 		pr_err("%s: fail to lock cpufreq(limit)\n", __func__);
 
-	if (data->pwr_en == -1)
-		period  = (MICRO_SEC/data->signal[0])-3;
-	else
-		period  = (MICRO_SEC/data->signal[0])-1;
+	 period  = (MICRO_SEC/data->signal[0]);
+	 if ((MICRO_SEC % data->signal[0]) >= (data->signal[0]/2)) {
+		if (data->pwr_en == -1) {
+#ifdef CONFIG_MACH_P2
+			if (data->signal[0] < 50000)
+				period += 1;
+#endif
+#ifdef CONFIG_MACH_P4NOTE
+				period += 1;
+#endif
+		} else
+			period += 1;
+	}
 
 	duty = period/4;
+	if ((period % 4) >= 2)
+		duty += 1;
 	on = duty;
-	off = period - duty;
+
+	if (data->pwr_en == -1)
+		off = (period - duty) - 3;
+	else
+		off = (period - duty) - 2;
+
+#ifdef CONFIG_MACH_P4NOTE
+	 off = (period - duty) - 3;
+#endif
 
 	local_irq_disable();
 	for (i = 1; i < MAX_SIZE; i += 2) {
@@ -104,13 +123,19 @@ static void ir_remocon_send(struct ir_remocon_data *data)
 		}
 
 		if (data->pwr_en == -1)
-			period = (MICRO_SEC/data->signal[0]);
-		else
-			period = (MICRO_SEC/data->signal[0])+1;
+			off_period = data->signal[i+1]*period;
+		else {
+			if (data->signal[0] < 50000)
+				off_period = data->signal[i+1]*(period+2);
+			else
+				off_period = data->signal[i+1]*(period+1);
+		}
 
-		off_period = data->signal[i+1]*period;
+#ifdef CONFIG_MACH_P4NOTE
+		off_period = data->signal[i+1]*(period+1);
+#endif
 
-		if (off_period <= 9999) {
+		if (off_period <= 30000) {
 			if (off_period > 1000) {
 				__udelay(off_period % 1000);
 				mdelay(off_period/1000);
@@ -371,7 +396,7 @@ static struct platform_driver ir_remocon_device_driver = {
 
 static int __init ir_remocon_init(void)
 {
-#if defined(CONFIG_IR_REMOCON_EUR)
+#if defined(CONFIG_IR_REMOCON_GPIO_EUR) || defined(CONFIG_IR_REMOCON_GPIO_TMO)
 	if (system_rev >= 11)
 		return 0;
 #endif
